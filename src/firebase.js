@@ -19,13 +19,13 @@ import { getAuth } from 'firebase/auth'
 import { getStorage } from 'firebase/storage'
 
 export const firebaseConfig = {
-  apiKey:            import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain:        import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId:         import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket:     import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId:             import.meta.env.VITE_FIREBASE_APP_ID,
-  measurementId:     import.meta.env.VITE_FIREBASE_MEASUREMENT_ID,
+  apiKey:            'AIzaSyCF71zcsUrSzajYFAgnjpRu6ECUMbxUfxw',
+  authDomain:        'pitstop-services.firebaseapp.com',
+  projectId:         'pitstop-services',
+  storageBucket:     'pitstop-services.firebasestorage.app',
+  messagingSenderId: '449334212891',
+  appId:             '1:449334212891:web:de32ac2338166376cf3bbe',
+  measurementId:     'G-E83D4XES8J',
 }
 
 const app = initializeApp(firebaseConfig)

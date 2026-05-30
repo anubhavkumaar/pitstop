@@ -1,0 +1,48 @@
+rules_version = '2';
+
+// ──────────────────────────────────────────────────────────────
+// Pit Stop — Firebase Storage rules
+//
+// Upload paths:
+//   pitstop_logs/bill/*        — staff only (Bill scans)
+//   pitstop_logs/before/*      — staff only
+//   pitstop_logs/after/*       — staff only
+//   pitstop_logs/extras/*      — staff only
+//   pitstop_uploads/*          — staff only (catch-all)
+//
+// Customer reviews accept image URLs only (not uploads) so this rules file
+// never allows anonymous writes — keeps storage safe from spam.
+// All paths: read is public so generated download URLs Just Work.
+// Size limit: 8 MB. Only image/* content types.
+// ──────────────────────────────────────────────────────────────
+
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function imageUnder8MB() {
+      return request.resource.size < 8 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+    }
+
+    // Work-log evidence — staff write, public read.
+    match /pitstop_logs/{folder}/{file=**} {
+      allow read:   if true;
+      allow write:  if signedIn() && imageUnder8MB();
+    }
+
+    // Generic uploads — staff only.
+    match /pitstop_uploads/{file=**} {
+      allow read:   if true;
+      allow write:  if signedIn() && imageUnder8MB();
+    }
+
+    // Default deny.
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

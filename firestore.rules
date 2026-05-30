@@ -1,0 +1,102 @@
+rules_version = '2';
+
+// ──────────────────────────────────────────────────────────────
+// Pit Stop — Firestore security rules
+//
+// Identity model:
+//   - "Bootstrap owner" — the UID listed in `isBootstrapOwner()` below.
+//     This is the very first admin and a permanent safety net so /admin is
+//     never lockable. All other admins live in pitstop_users with role='admin'.
+//   - Subsequent admins / crew are created via /admin's Users panel and stored
+//     as docs under pitstop_users/{uid} with field `role: 'admin' | 'crew' | 'blocked'`.
+// ──────────────────────────────────────────────────────────────
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isBootstrapOwner() {
+      return signedIn()
+        && request.auth.uid in [
+          '9Fm4u9BgskRYczz4U7xq93DEZjx2'
+        ];
+    }
+
+    function userRole() {
+      return exists(/databases/$(database)/documents/pitstop_users/$(request.auth.uid))
+        ? get(/databases/$(database)/documents/pitstop_users/$(request.auth.uid)).data.role
+        : null;
+    }
+
+    function isAdmin() {
+      return isBootstrapOwner() || (signedIn() && userRole() == 'admin');
+    }
+
+    function isStaff() {
+      return isBootstrapOwner()
+        || (signedIn() && (userRole() == 'admin' || userRole() == 'crew'));
+    }
+
+    // Managed user accounts. Anyone can read their *own* doc; admins can read everyone.
+    // Only admins can create / change roles / delete user docs.
+    match /pitstop_users/{userId} {
+      allow read:   if signedIn() && (request.auth.uid == userId || isAdmin());
+      allow create, update, delete: if isAdmin();
+    }
+
+    // Secrets / API tokens (e.g. vgy.me userkey for uploads).
+    // ADMINS ONLY — never exposed to anonymous visitors.
+    match /pitstop_secrets/{doc} {
+      allow read, write: if isAdmin();
+    }
+
+    // Public booking inbox — anyone can submit; only staff can read/update; admin can delete.
+    match /pitstop_requests/{doc} {
+      allow create: if true;
+      allow read:   if isStaff();
+      allow update: if isStaff();
+      allow delete: if isAdmin();
+    }
+
+    // Public-facing roster — admin-managed.
+    match /pitstop_roster/{doc} {
+      allow read:  if true;
+      allow write: if isAdmin();
+    }
+
+    // Site config (pricing, taglines, location). Admin-only writes.
+    match /pitstop_config/{doc} {
+      allow read:  if true;
+      allow write: if isAdmin();
+    }
+
+    // Work log — public portfolio of completed jobs.
+    // Anyone can read. Staff (crew or admin) can create / update / delete.
+    match /pitstop_logs/{doc} {
+      allow read:   if true;
+      allow create, update, delete: if isStaff();
+    }
+
+    // Gallery — staff post photos of happy customers/cars; public read.
+    match /pitstop_gallery/{doc} {
+      allow read:                if true;
+      allow create, update, delete: if isStaff();
+    }
+
+    // Customer reviews — anyone can submit, only approved ones are public.
+    // Staff can read everything (for moderation) and update/delete.
+    match /pitstop_reviews/{doc} {
+      allow create: if true;
+      allow read:   if resource.data.approved == true || isStaff();
+      allow update, delete: if isStaff();
+    }
+
+    // Default deny — anything not matched above is rejected.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

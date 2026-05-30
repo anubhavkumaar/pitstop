@@ -1,0 +1,49 @@
+:root {
+  --pit-black: #0B0B0F;
+  --carbon:    #15171C;
+  --carbon-2:  #1C1F26;
+  --steel:     #A8AFBA;
+  --chrome:    #E9ECEF;
+  --hazard:    #F5C518;
+  --hazard-2:  #FFD84D;
+  --torch:     #E63946;
+  --torch-2:   #FF5566;
+  --grid:      rgba(255,255,255,0.04);
+  --border:    rgba(255,255,255,0.08);
+  --border-2:  rgba(255,255,255,0.14);
+  --t1:        #E9ECEF;
+  --t2:        #A8AFBA;
+  --t3:        #6B7280;
+
+  --sans:    'Inter', system-ui, 'Segoe UI', Roboto, sans-serif;
+  --display: 'Russo One', 'Bebas Neue', 'Anton', system-ui, sans-serif;
+  --mono:    ui-monospace, 'JetBrains Mono', Consolas, monospace;
+
+  color-scheme: dark;
+  color: var(--t1);
+  background: var(--pit-black);
+  font: 16px/1.55 var(--sans);
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html, body, #root { margin: 0; padding: 0; min-height: 100%; }
+
+body {
+  background:
+    radial-gradient(1200px 600px at 80% -10%, rgba(245,197,24,0.06), transparent 60%),
+    radial-gradient(1000px 500px at -10% 30%, rgba(230,57,70,0.05), transparent 60%),
+    linear-gradient(180deg, #07080B 0%, #0B0B0F 100%);
+  background-attachment: fixed;
+  overflow-x: hidden;
+}
+
+a { color: inherit; text-decoration: none; }
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+img { max-width: 100%; display: block; }
+
+::selection { background: var(--hazard); color: #000; }

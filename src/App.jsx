@@ -61,12 +61,12 @@ const TEAM_SEED = [
 ]
 
 const SERVICES = [
-  { ic: '🔧', name: 'Full Repair',          desc: 'Body repair, engine parts, suspension, brakes — the heavy mechanical work. We return the car better than it left.',                       price: '$250 · repair at cost' },
-  { ic: '⛽', name: 'Podium Refuel',        desc: 'Two grades on tap: Normal fuel, or Podium — premium grade that lasts noticeably longer between top-offs. Filled to the dot, every time.', price: '$250 · fuel at cost' },
-  { ic: '✨', name: 'Wash & Cleaning',      desc: 'Exterior wash, interior wipe, glass, tire shine. The full clean.',                                                                            price: '$250 flat' },
+  { ic: '🔧', name: 'Full Repair',          desc: 'Body repair, engine parts, suspension, brakes — the heavy mechanical work. We return the car better than it left.',                       price: '$500 · repair at cost' },
+  { ic: '⛽', name: 'Podium Refuel',        desc: 'Two grades on tap: Normal fuel, or Podium — premium grade that lasts noticeably longer between top-offs. Filled to the dot, every time.', price: '$500 · fuel at cost' },
+  { ic: '✨', name: 'Wash & Cleaning',      desc: 'Exterior wash, interior wipe, glass, tire shine. The full clean.',                                                                            price: '$500 flat' },
   { ic: '🚛', name: 'Pickup & Drop-off',   desc: "We'll grab the car from wherever and park it in whichever public garage you want. Hands-free.",                                              price: 'Included' },
-  { ic: '🆘', name: 'Roadside Recovery',   desc: 'Wrecked it on a street race or rolled it off Chiliad? We come out, hook it up, and tow it in.',                                              price: '$250 · tow at cost' },
-  { ic: '🏁', name: 'Pit Stop Package',    desc: 'Full repair + full refuel + full cleaning. The "back to showroom" treatment, one flat handle.',                                              price: '$250 · repair + fuel at cost' },
+  { ic: '🆘', name: 'Roadside Recovery',   desc: 'Wrecked it on a street race or rolled it off Chiliad? We come out, hook it up, and tow it in.',                                              price: '$500 · tow at cost' },
+  { ic: '🏁', name: 'Pit Stop Package',    desc: 'Full repair + full refuel + full cleaning. The "back to showroom" treatment, one flat handle.',                                              price: '$500 · repair + fuel at cost' },
 ]
 
 const FAQ = [
@@ -74,8 +74,8 @@ const FAQ = [
     a: 'The few mechanic options out there fill up fast, only run Normal fuel, and won\'t park your car for you. We close that gap end-to-end — pickup, repair, premium refuel, cleaning, and drop-off wherever you want it.' },
   { q: 'Where are you located?',
     a: 'For now, SouthSide Car Wash. We collect from anywhere in Los Santos and drop into any public garage you want. A permanent shop is in the works.' },
-  { q: 'What does the $250 service fee cover?',
-    a: 'Pickup, all the work agreed on, full clean, and drop-off to the garage of your choice. It\'s flat $250 regardless of scope. Repair costs and fuel are passed through at cost on top.' },
+  { q: 'What does the $500 service fee cover?',
+    a: 'Pickup, all the work agreed on, full clean, and drop-off to the garage of your choice. It\'s flat $500 regardless of scope. Repair costs and fuel are passed through at cost on top.' },
   { q: 'Who runs Pit Stop?',
     a: 'We\'re a small crew of civilians. Three of us also work as car dealers at Luxury Autos, which gives us deep familiarity with the local vehicle market. Pit Stop is what we do on the side because the market needs it.' },
 ]
@@ -524,7 +524,7 @@ function HomePage() {
         <motion.p className="hero-sub"
           initial={{opacity:0, y:12}} animate={{opacity:1, y:0}} transition={{duration:.7, delay:.55}}>
           Pit Stop is a freelance civilian crew giving cars the full treatment — repair, Podium refuel, cleaning —
-          and dropping them back wherever you want. One flat $250 service fee, no matter the scope.
+          and dropping them back wherever you want. One flat $500 service fee, no matter the scope.
         </motion.p>
         <motion.div className="hero-cta"
           initial={{opacity:0, y:8}} animate={{opacity:1, y:0}} transition={{duration:.5, delay:.7}}>
@@ -555,7 +555,7 @@ function HomePage() {
 
       <Marquee speed={36} items={[
         'Pit Stop', 'Full Repair', 'Podium Refuel', 'Wash & Cleaning',
-        'Pickup & Drop-off', 'Roadside Recovery', '$250 flat', 'Los Santos · 24/7',
+        'Pickup & Drop-off', 'Roadside Recovery', '$500 flat', 'Los Santos · 24/7',
       ]}/>
 
       <CheckeredStrip/>
@@ -613,13 +613,13 @@ function HomePage() {
         </motion.div>
 
         <div className="price-board">
-          <div className="price-row"><span>Service fee (flat, any scope)</span><b>$250</b></div>
+          <div className="price-row"><span>Service fee (flat, any scope)</span><b>$500</b></div>
           <div className="price-row"><span>Repair (body, engine parts, suspension…)</span><b>At cost</b></div>
           <div className="price-row"><span>Fuel</span><b>At cost</b></div>
           <div className="price-row"><span>Pickup &amp; drop-off</span><b>Included</b></div>
           <div className="price-row price-row--total">
             <span>What you pay</span>
-            <b className="t2">$250 service · plus whatever the actual repair and fuel cost.</b>
+            <b className="t2">$500 service · plus whatever the actual repair and fuel cost.</b>
           </div>
         </div>
       </section>
@@ -705,7 +705,7 @@ function ServicesPage() {
     <main className="page">
       <PageHeader kicker="Services" title="Everything we do, on the board.">
         Pick a single service or grab the full Pit Stop Package. Either way it&apos;s a flat
-        $250 service fee — pickup, work, clean, and drop-off included. Repair and fuel
+        $500 service fee — pickup, work, clean, and drop-off included. Repair and fuel
         are passed through at cost.
       </PageHeader>
 
@@ -733,7 +733,7 @@ function ServicesPage() {
             <li><b>Pickup.</b> A crew member rolls out and collects the vehicle.</li>
             <li><b>Work.</b> Repair, refuel, cleaning — whichever scope you asked for.</li>
             <li><b>Drop.</b> Parked in whichever public garage you choose.</li>
-            <li><b>Bill.</b> Flat $250 service + repair + fuel at cost. Paid on delivery.</li>
+            <li><b>Bill.</b> Flat $500 service + repair + fuel at cost. Paid on delivery.</li>
           </ol>
         </div>
       </section>
@@ -1201,7 +1201,7 @@ const EMPTY_LOG = {
   clientName: '', vehicle: '', plate: '',
   jobDate: todayISO(),
   scope: [],
-  costBreakdown: { repair: '', fuel: '', fuelType: 'Podium', serviceFee: 250, extras: '', extrasLabel: '' },
+  costBreakdown: { repair: '', fuel: '', fuelType: 'Podium', serviceFee: 500, extras: '', extrasLabel: '' },
   evidence: { bill: '', before: '', after: '' },
   extraImages: [],
   handledBy: '', notes: '',
@@ -1220,7 +1220,7 @@ function logToDraft(log) {
       repair:      log.costBreakdown?.repair ?? log.costBreakdown?.parts ?? '',
       fuel:        log.costBreakdown?.fuel ?? '',
       fuelType:    log.costBreakdown?.fuelType || 'Podium',
-      serviceFee:  log.costBreakdown?.serviceFee ?? 250,
+      serviceFee:  log.costBreakdown?.serviceFee ?? 500,
       extras:      log.costBreakdown?.extras ?? '',
       extrasLabel: log.costBreakdown?.extrasLabel || '',
     },
@@ -1727,7 +1727,7 @@ function LogForm({ user, existing, onDone }) {
             </select>
           </label>
           <label className="field"><span>Service fee ($)</span>
-            <input type="number" value={draft.costBreakdown.serviceFee} onChange={e => cbField('serviceFee', e.target.value)} placeholder="250"/>
+            <input type="number" value={draft.costBreakdown.serviceFee} onChange={e => cbField('serviceFee', e.target.value)} placeholder="500"/>
           </label>
         </div>
         <div className="form-row">
@@ -1967,7 +1967,7 @@ function PitchPage() {
             cleans the car, and parks it in the customer&apos;s garage of choice.
           </PitchBlock>
           <PitchBlock n="03" t="A flat, transparent fee.">
-            $250 service fee, flat, regardless of scope. Repair and fuel are passed through at
+            $500 service fee, flat, regardless of scope. Repair and fuel are passed through at
             cost — no markup, no surprises. The customer sees exactly what they&apos;re paying for.
           </PitchBlock>
           <PitchBlock n="04" t="A civilian crew with real specialties.">

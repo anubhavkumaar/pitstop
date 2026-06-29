@@ -1,7 +1,7 @@
 {
-  "name": "Pit Stop",
-  "short_name": "Pit Stop",
-  "description": "Freelance auto services in Los Santos. Repair, Podium refuel, cleaning, pickup and drop-off.",
+  "name": "Benny's Original Motor Works",
+  "short_name": "Benny's",
+  "description": "By Pit Stop. Repair, custom builds, performance upgrades, cleaning, pickup and drop-off in Los Santos.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#0B0B0F",

@@ -2,12 +2,21 @@
   --pit-black: #0B0B0F;
   --carbon:    #15171C;
   --carbon-2:  #1C1F26;
+  --navy:      #1B2A45;
   --steel:     #A8AFBA;
   --chrome:    #E9ECEF;
-  --hazard:    #F5C518;
-  --hazard-2:  #FFD84D;
+
+  /* Benny's red leads now — primary brand/interactive accent. */
+  --brand:     #E63946;
+  --brand-2:   #FF5566;
   --torch:     #E63946;
   --torch-2:   #FF5566;
+
+  /* Pit Stop's original hazard-yellow: demoted to a deliberate secondary/
+     legacy accent (star ratings, "new" status, the old wordmark). */
+  --legacy:    #F5C518;
+  --legacy-2:  #FFD84D;
+
   --grid:      rgba(255,255,255,0.04);
   --border:    rgba(255,255,255,0.08);
   --border-2:  rgba(255,255,255,0.14);
@@ -16,8 +25,13 @@
   --t3:        #6B7280;
 
   --sans:    'Inter', system-ui, 'Segoe UI', Roboto, sans-serif;
-  --display: 'Russo One', 'Bebas Neue', 'Anton', system-ui, sans-serif;
+  --display: 'Anton', 'Russo One', system-ui, sans-serif;
   --mono:    ui-monospace, 'JetBrains Mono', Consolas, monospace;
+
+  /* ── Motion tokens ──────────────────────────────────────── */
+  --ease-out:    cubic-bezier(0.23, 1, 0.32, 1);
+  --ease-in-out: cubic-bezier(0.77, 0, 0.175, 1);
+  --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
 
   color-scheme: dark;
   color: var(--t1);
@@ -34,9 +48,11 @@
 html, body, #root { margin: 0; padding: 0; min-height: 100%; }
 
 body {
+  /* vmax-sized (not fixed px) so the ambient glow stays proportional on
+     2K/4K/ultrawide screens instead of shrinking to a speck in the corner. */
   background:
-    radial-gradient(1200px 600px at 80% -10%, rgba(245,197,24,0.06), transparent 60%),
-    radial-gradient(1000px 500px at -10% 30%, rgba(230,57,70,0.05), transparent 60%),
+    radial-gradient(70vmax 38vmax at 75% -10%, rgba(230,57,70,0.09), transparent 60%),
+    radial-gradient(38vmax 24vmax at -5% 80%, rgba(245,197,24,0.035), transparent 60%),
     linear-gradient(180deg, #07080B 0%, #0B0B0F 100%);
   background-attachment: fixed;
   overflow-x: hidden;
@@ -46,4 +62,13 @@ a { color: inherit; text-decoration: none; }
 button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
 img { max-width: 100%; display: block; }
 
-::selection { background: var(--hazard); color: #000; }
+::selection { background: var(--brand); color: #000; }
+
+/* ── Reduced motion: kill perpetual CSS-driven loops ───────── */
+@media (prefers-reduced-motion: reduce) {
+  .ps-checker,
+  .hero-eyebrow .dot,
+  .card::before {
+    animation: none !important;
+  }
+}

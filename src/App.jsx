@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, useRef, Fragment } from 'react'
 import { Routes, Route, Link, NavLink, useLocation, useNavigate } from 'react-router-dom'
-import { motion, AnimatePresence, useScroll, useSpring, useInView, useMotionValue, animate } from 'framer-motion'
+import { motion, AnimatePresence, useInView, useMotionValue, useReducedMotion, animate } from 'framer-motion'
 import { db, auth, secondaryAuth, storage } from './firebase'
 import { ref as storageRef, uploadBytes, getDownloadURL } from 'firebase/storage'
 import {
@@ -11,8 +11,14 @@ import {
   signInWithEmailAndPassword, signOut, onAuthStateChanged,
   createUserWithEmailAndPassword, signOut as signOutSecondary,
 } from 'firebase/auth'
-import { PitStopBadge, PitStopWordmark, CheckeredStrip } from './Logo'
+import { CheckeredStrip } from './Logo'
+import { IconWrench, IconUpgrade, IconGauge, IconWash, IconPickup, IconRescue, IconFlag, IconCash, IconCamera, IconStar } from './icons'
+import { HeroBackplate } from './HeroArt'
 import akLogo from './assets/blue.png'
+import bennysLogo from './assets/bennys-logo.png'
+import pitstopLogo from './assets/pitstop-logo-wide.png'
+import brandRevealVideo from './assets/brand-reveal.mp4'
+import heroGarageVideo from './assets/hero-garage.mp4'
 import './App.css'
 
 /* ─── Static seed data ─────────────────────────────────────── */
@@ -28,6 +34,18 @@ const isBootstrapOwner = user => !!user && OWNER_UIDS.includes(user.uid)
 const isAdmin = (user, role) => isBootstrapOwner(user) || role === 'admin'
 // Staff = anyone signed in with a non-blocked role (or the bootstrap owner)
 const isStaff = (user, role) => !!user && role !== 'blocked' && (isBootstrapOwner(user) || role === 'admin' || role === 'crew')
+
+// Benny's launch giveaway — narrow, single-purpose roles. Deliberately NOT
+// folded into isStaff(): that gate covers the full staff dashboard (booking
+// inbox, work logs, gallery, reviews), which a Soochi partner account should
+// never see.
+const canRepairTokens = (user, role) => isAdmin(user, role) || role === 'crew' || role === 'bennys'
+const canFoodTokens   = (user, role) => isAdmin(user, role) || role === 'soochi'
+
+// Giveaway car allocation — 1 car drawn per ticket channel. The other 8 of
+// the 10 launch-day cars come from separate, non-ticket activities run live
+// at the event and aren't tracked by this tool.
+const CARS_PER_CHANNEL = { repair: 1, food: 1 }
 
 // Contact-form cooldown so one visitor can't spam the inbox.
 const BOOKING_COOLDOWN_MS = 6 * 60 * 60 * 1000   // 6 hours
@@ -61,23 +79,22 @@ const TEAM_SEED = [
 ]
 
 const SERVICES = [
-  { ic: '🔧', name: 'Full Repair',          desc: 'Body repair, engine parts, suspension, brakes — the heavy mechanical work. We return the car better than it left.',                       price: '$500 · repair at cost' },
-  { ic: '⛽', name: 'Podium Refuel',        desc: 'Two grades on tap: Normal fuel, or Podium — premium grade that lasts noticeably longer between top-offs. Filled to the dot, every time.', price: '$500 · fuel at cost' },
-  { ic: '✨', name: 'Wash & Cleaning',      desc: 'Exterior wash, interior wipe, glass, tire shine. The full clean.',                                                                            price: '$500 flat' },
-  { ic: '🚛', name: 'Pickup & Drop-off',   desc: "We'll grab the car from wherever and park it in whichever public garage you want. Hands-free.",                                              price: 'Included' },
-  { ic: '🆘', name: 'Roadside Recovery',   desc: 'Wrecked it on a street race or rolled it off Chiliad? We come out, hook it up, and tow it in.',                                              price: '$500 · tow at cost' },
-  { ic: '🏁', name: 'Pit Stop Package',    desc: 'Full repair + full refuel + full cleaning. The "back to showroom" treatment, one flat handle.',                                              price: '$500 · repair + fuel at cost' },
+  { Icon: IconWrench, name: 'Full Repair',              desc: 'Body repair, engine parts, suspension, brakes — the heavy mechanical work. We return the car better than it left.',                  price: 'TBA · parts at cost' },
+  { Icon: IconUpgrade, name: 'Custom Builds & Upgrades', desc: "Parts, looks, ECU tunes, suspension and drivetrain upgrades — built to your spec, not the showroom's.",                                price: 'TBA · parts at cost' },
+  { Icon: IconGauge,  name: 'Stable Builds',            desc: "Daily-driver tuning that won't bite back. Balanced power, predictable handling, built to be driven hard every single day.",          price: 'TBA · parts at cost' },
+  { Icon: IconFlag,   name: 'Performance Builds',       desc: 'Track-ready, straight-line monsters, whatever the spec calls for. Built for the podium, not the parking lot.',                        price: 'TBA · parts at cost' },
+  { Icon: IconWash,   name: 'Wash & Cleaning',          desc: 'Exterior wash, interior wipe, glass, tire shine. The full clean.',                                                                     price: 'TBA' },
+  { Icon: IconPickup, name: 'Pickup & Drop-off',        desc: "We'll grab the car from wherever and park it in whichever public garage you want. Hands-free.",                                       price: 'Included' },
+  { Icon: IconRescue, name: 'Roadside Recovery',        desc: 'Wrecked it on a street race or rolled it off Chiliad? We come out, hook it up, and tow it in.',                                       price: 'TBA · tow at cost' },
 ]
 
 const FAQ = [
   { q: 'Why use Pit Stop?',
-    a: 'The few mechanic options out there fill up fast, only run Normal fuel, and won\'t park your car for you. We close that gap end-to-end — pickup, repair, premium refuel, cleaning, and drop-off wherever you want it.' },
+    a: "The few mechanic options out there fill up fast and won't park your car for you. We close that gap end-to-end — pickup, repair, custom builds and upgrades, cleaning, and drop-off wherever you want it." },
   { q: 'Where are you located?',
-    a: 'For now, SouthSide Car Wash. We collect from anywhere in Los Santos and drop into any public garage you want. A permanent shop is in the works.' },
-  { q: 'What does the $500 service fee cover?',
-    a: 'Pickup, all the work agreed on, full clean, and drop-off to the garage of your choice. It\'s flat $500 regardless of scope. Repair costs and fuel are passed through at cost on top.' },
-  { q: 'Who runs Pit Stop?',
-    a: 'We\'re a small crew of civilians. Three of us also work as car dealers at Luxury Autos, which gives us deep familiarity with the local vehicle market. Pit Stop is what we do on the side because the market needs it.' },
+    a: "Benny's Original Motor Works, our real shop, opening July 1st. We still collect from anywhere in Los Santos and drop into any public garage you want, too." },
+  { q: 'What does the service fee cover?',
+    a: "Pickup, all the work agreed on, full clean, and drop-off to the garage of your choice. The flat rate is being finalized for Benny's opening, announcing soon. Parts costs are passed through at cost on top." },
 ]
 
 /* ─── Helpers ──────────────────────────────────────────────── */
@@ -107,6 +124,80 @@ function useAuth() {
   return { user, role, loaded }
 }
 
+// Single source of truth for crew data — both the homepage teaser and the
+// full /team page read this, so they can never drift out of sync with each
+// other or with what's actually configured in Admin -> Roster.
+function useRoster() {
+  const [roster, setRoster] = useState(TEAM_SEED)
+  useEffect(() => {
+    const unsub = onSnapshot(query(collection(db, 'pitstop_roster'), orderBy('order')), snap => {
+      const live = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+      if (live.length) setRoster(live)
+    }, () => { /* offline / not configured — fall back to seed */ })
+    return unsub
+  }, [])
+  return roster
+}
+
+// Issues one Benny's-giveaway ticket: a short, collision-checked code plus
+// the Firestore doc. One doc per ticket (buying twice = two docs) so ticket
+// weight in the draw falls out naturally — no separate count field needed.
+async function issueGiveawayToken({ channel, name, note, issuer }) {
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const n = 1000 + (crypto.getRandomValues(new Uint32Array(1))[0] % 9000)
+    const code = `${channel === 'repair' ? 'R' : 'F'}-${n}`
+    const dupe = await getDocs(query(collection(db, 'bennys_tokens'), where('code', '==', code)))
+    if (!dupe.empty) continue
+    const issuedByLabel = issuer?.email || 'unknown'
+    await addDoc(collection(db, 'bennys_tokens'), {
+      code, channel, name: name.trim(), note: (note || '').trim(),
+      issuedByUid:   issuer?.uid   || null,
+      issuedByLabel,
+      createdAt: serverTimestamp(),
+      won: false, wonPrize: null, wonAt: null,
+    })
+    // Fire-and-forget backup to Google Sheets (only from the /bennys and
+    // /soochi issuance flow — see AdminSettings for the "only writer" intent).
+    // No-op until an admin configures pitstop_secrets/sheets.
+    postToSheets({ type: 'ticket', code, channel, name: name.trim(), note: (note || '').trim(), issuedByLabel })
+    return code
+  }
+  throw new Error('Could not generate a unique code — try again.')
+}
+
+async function postToSheets(payload) {
+  try {
+    const snap = await getDoc(doc(db, 'pitstop_secrets', 'sheets'))
+    const url = snap.exists() ? (snap.data()?.url || '') : ''
+    if (!url) return
+    // text/plain avoids a CORS preflight against the Apps Script web app,
+    // which doesn't reliably answer OPTIONS requests.
+    await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(payload) })
+  } catch (err) {
+    console.error('[sheets backup] failed:', err)
+  }
+}
+
+// CSV export — manual backup snapshot for the giveaway (see AdminGiveaway).
+function toCSV(rows, headers) {
+  const escape = v => {
+    const s = String(v ?? '')
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+  }
+  const lines = [headers.map(escape).join(',')]
+  for (const row of rows) lines.push(headers.map(h => escape(row[h])).join(','))
+  return lines.join('\n')
+}
+
+function downloadCSV(filename, csv) {
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url; a.download = filename
+  document.body.appendChild(a); a.click(); document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
 const fadeUp = {
   initial: { opacity: 0, y: 24 },
   whileInView: { opacity: 1, y: 0 },
@@ -117,12 +208,6 @@ const fadeUp = {
 /* ─── Shared chrome ────────────────────────────────────────── */
 
 /* ─── Animation primitives ─────────────────────────────────── */
-
-function ScrollProgressBar() {
-  const { scrollYProgress } = useScroll()
-  const scaleX = useSpring(scrollYProgress, { stiffness: 120, damping: 30, restDelta: 0.001 })
-  return <motion.div className="scroll-progress" style={{ scaleX }}/>
-}
 
 function AnimatedNumber({ value, format = (v) => Math.round(v).toLocaleString(), duration = 1.4, prefix = '', suffix = '' }) {
   const ref = useRef(null)
@@ -143,24 +228,8 @@ function AnimatedNumber({ value, format = (v) => Math.round(v).toLocaleString(),
   return <span ref={ref}>{prefix}{display}{suffix}</span>
 }
 
-function Marquee({ items, speed = 36 }) {
-  // Duplicate the list so the loop is seamless.
-  const doubled = [...items, ...items]
-  return (
-    <div className="marquee" aria-hidden="true">
-      <div className="marquee-track" style={{ animationDuration: `${speed}s` }}>
-        {doubled.map((it, i) => (
-          <span key={i} className="marquee-item">
-            <span className="marquee-text">{it}</span>
-            <span className="marquee-sep">●</span>
-          </span>
-        ))}
-      </div>
-    </div>
-  )
-}
-
 function FloatingOrb({ x, y, size, color, delay = 0 }) {
+  const reduce = useReducedMotion()
   return (
     <motion.div
       className="orb"
@@ -168,7 +237,7 @@ function FloatingOrb({ x, y, size, color, delay = 0 }) {
         left: x, top: y, width: size, height: size,
         background: `radial-gradient(circle, ${color} 0%, transparent 70%)`,
       }}
-      animate={{
+      animate={reduce ? {} : {
         x: [0, 24, -16, 0],
         y: [0, -32, 16, 0],
         scale: [1, 1.08, 0.95, 1],
@@ -179,11 +248,12 @@ function FloatingOrb({ x, y, size, color, delay = 0 }) {
 }
 
 function PageTransition({ children }) {
+  const reduce = useReducedMotion()
   return (
     <motion.div
-      initial={{ opacity: 0, y: 8 }}
+      initial={{ opacity: 0, y: reduce ? 0 : 8 }}
       animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -8 }}
+      exit={{ opacity: 0, y: reduce ? 0 : -8, transition: { duration: 0.18, ease: [0.4, 0, 1, 1] } }}
       transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}>
       {children}
     </motion.div>
@@ -287,16 +357,17 @@ const NutSVG = ({ size, fill }) => {
   )
 }
 
-function FloatingGear({ x, y, size, teeth = 8, dir = 1, delay = 0, spinDur = 16, floatDur = 9, fill = 'rgba(245,197,24,0.24)' }) {
+function FloatingGear({ x, y, size, teeth = 8, dir = 1, delay = 0, spinDur = 16, floatDur = 9, fill = 'rgba(230,57,70,0.16)' }) {
+  const reduce = useReducedMotion()
   return (
     <motion.div className="mech-part" style={{ left: x, top: y }}
       initial={{ opacity: 0, scale: 0.3 }} animate={{ opacity: 1, scale: 1 }}
       transition={{ duration: 0.9, delay, ease: [0.22, 1, 0.36, 1] }}>
       <motion.div
-        animate={{ y: [0, -14, 8, -6, 0], x: [0, 5, -3, 2, 0] }}
+        animate={reduce ? {} : { y: [0, -14, 8, -6, 0], x: [0, 5, -3, 2, 0] }}
         transition={{ duration: floatDur, repeat: Infinity, ease: 'easeInOut', delay: delay + 0.9 }}>
         <motion.div
-          animate={{ rotate: dir > 0 ? [0, 360] : [0, -360] }}
+          animate={reduce ? {} : { rotate: dir > 0 ? [0, 360] : [0, -360] }}
           transition={{ duration: spinDur, repeat: Infinity, ease: 'linear' }}>
           <GearSVG size={size} teeth={teeth} fill={fill}/>
         </motion.div>
@@ -306,13 +377,14 @@ function FloatingGear({ x, y, size, teeth = 8, dir = 1, delay = 0, spinDur = 16,
 }
 
 // Wrench drifts horizontally, rocks slightly — like it's resting on a surface with vibration
-function FloatingWrench({ x, y, size, delay = 0, fill = 'rgba(245,197,24,0.24)' }) {
+function FloatingWrench({ x, y, size, delay = 0, fill = 'rgba(230,57,70,0.16)' }) {
+  const reduce = useReducedMotion()
   return (
     <motion.div className="mech-part" style={{ left: x, top: y }}
       initial={{ opacity: 0, scale: 0.4 }} animate={{ opacity: 1, scale: 1 }}
       transition={{ duration: 0.8, delay, ease: [0.22, 1, 0.36, 1] }}>
       <motion.div
-        animate={{ y: [0, -16, 8, -10, 0], x: [0, 10, -5, 4, 0], rotate: [-8, 6, -3, 10, -8] }}
+        animate={reduce ? {} : { y: [0, -16, 8, -10, 0], x: [0, 10, -5, 4, 0], rotate: [-8, 6, -3, 10, -8] }}
         transition={{ duration: 10, repeat: Infinity, ease: 'easeInOut', delay: delay + 0.8 }}>
         <WrenchSVG size={size} fill={fill}/>
       </motion.div>
@@ -321,16 +393,17 @@ function FloatingWrench({ x, y, size, delay = 0, fill = 'rgba(245,197,24,0.24)' 
 }
 
 // Bolt tumbles slowly — like a fastener dropped in zero-g
-function FloatingBolt({ x, y, size, delay = 0, fill = 'rgba(165,180,195,0.3)' }) {
+function FloatingBolt({ x, y, size, delay = 0, fill = 'rgba(165,180,195,0.2)' }) {
+  const reduce = useReducedMotion()
   return (
     <motion.div className="mech-part" style={{ left: x, top: y }}
       initial={{ opacity: 0, scale: 0.4 }} animate={{ opacity: 1, scale: 1 }}
       transition={{ duration: 0.7, delay, ease: [0.22, 1, 0.36, 1] }}>
       <motion.div
-        animate={{ y: [0, -20, 12, -14, 5, 0], x: [0, 5, -8, 3, 0] }}
+        animate={reduce ? {} : { y: [0, -20, 12, -14, 5, 0], x: [0, 5, -8, 3, 0] }}
         transition={{ duration: 9, repeat: Infinity, ease: 'easeInOut', delay: delay + 0.7 }}>
         <motion.div
-          animate={{ rotate: [0, 180, 360] }}
+          animate={reduce ? {} : { rotate: [0, 180, 360] }}
           transition={{ duration: 8, repeat: Infinity, ease: 'easeInOut' }}>
           <BoltSVG size={size} fill={fill}/>
         </motion.div>
@@ -340,16 +413,17 @@ function FloatingBolt({ x, y, size, delay = 0, fill = 'rgba(165,180,195,0.3)' })
 }
 
 // Nut spins on its axis — like spinning on a bolt thread
-function FloatingNut({ x, y, size, delay = 0, fill = 'rgba(165,180,195,0.3)' }) {
+function FloatingNut({ x, y, size, delay = 0, fill = 'rgba(165,180,195,0.2)' }) {
+  const reduce = useReducedMotion()
   return (
     <motion.div className="mech-part" style={{ left: x, top: y }}
       initial={{ opacity: 0, scale: 0.4 }} animate={{ opacity: 1, scale: 1 }}
       transition={{ duration: 0.7, delay, ease: [0.22, 1, 0.36, 1] }}>
       <motion.div
-        animate={{ y: [0, -10, 7, -5, 0] }}
+        animate={reduce ? {} : { y: [0, -10, 7, -5, 0] }}
         transition={{ duration: 11, repeat: Infinity, ease: 'easeInOut', delay: delay + 0.7 }}>
         <motion.div
-          animate={{ rotate: [0, -360] }}
+          animate={reduce ? {} : { rotate: [0, -360] }}
           transition={{ duration: 15, repeat: Infinity, ease: 'linear' }}>
           <NutSVG size={size} fill={fill}/>
         </motion.div>
@@ -359,17 +433,15 @@ function FloatingNut({ x, y, size, delay = 0, fill = 'rgba(165,180,195,0.3)' }) 
 }
 
 const SPARKS_DATA = [
-  { x: '8%',  delay: 0,   dur: 2.0, rpt: 3.5 },
-  { x: '20%', delay: 0.7, dur: 1.7, rpt: 2.8 },
-  { x: '33%', delay: 1.5, dur: 2.3, rpt: 4.0 },
-  { x: '47%', delay: 0.3, dur: 1.9, rpt: 3.2 },
-  { x: '61%', delay: 1.1, dur: 2.1, rpt: 3.8 },
-  { x: '74%', delay: 0.6, dur: 1.6, rpt: 2.5 },
-  { x: '88%', delay: 1.9, dur: 2.4, rpt: 4.2 },
-  { x: '95%', delay: 2.4, dur: 1.8, rpt: 3.0 },
+  { x: '12%', delay: 0,   dur: 2.0, rpt: 5.5 },
+  { x: '38%', delay: 1.5, dur: 2.3, rpt: 6.0 },
+  { x: '64%', delay: 0.8, dur: 2.1, rpt: 5.8 },
+  { x: '90%', delay: 2.2, dur: 1.8, rpt: 6.2 },
 ]
 
 function Sparks() {
+  const reduce = useReducedMotion()
+  if (reduce) return null
   return (
     <div className="sparks-layer" aria-hidden="true">
       {SPARKS_DATA.map((s, i) => (
@@ -382,10 +454,23 @@ function Sparks() {
   )
 }
 
+// Illustrated empty state — small icon badge + title + optional subtitle
+function EmptyState({ icon: Icon, title, subtitle }) {
+  return (
+    <motion.div className="empty-state"
+      initial={{opacity:0, y:8}} animate={{opacity:1, y:0}} transition={{duration:.4}}>
+      <div className="empty-state-ic"><Icon size={30}/></div>
+      <div className="empty-state-title">{title}</div>
+      {subtitle && <p className="empty-state-sub">{subtitle}</p>}
+    </motion.div>
+  )
+}
+
 function Nav() {
   const [open, setOpen] = useState(false)
   const loc = useLocation()
   useEffect(() => { setOpen(false) }, [loc.pathname])
+  const { user, role, loaded } = useAuth()
 
   const links = [
     { to: '/',         label: 'Home' },
@@ -398,11 +483,20 @@ function Nav() {
     // /pitch is intentionally unlinked — reachable by direct URL only.
   ]
 
+  // The signed-in side of the nav grows with whatever this account can
+  // actually do — a crew login sees nothing extra, an admin sees everything.
+  const roleLinks = (loaded && user) ? [
+    canRepairTokens(user, role) && { to: '/bennys', label: "Benny's" },
+    canFoodTokens(user, role)   && { to: '/soochi', label: 'Soochi' },
+    isAdmin(user, role)         && { to: '/admin',  label: 'Admin' },
+  ].filter(Boolean) : []
+
   return (
     <header className="nav">
       <Link to="/" className="nav-brand">
-        <PitStopBadge size={36}/>
-        <PitStopWordmark height={22}/>
+        <img src={bennysLogo} alt="Benny's Original Motor Works" className="nav-logo"/>
+        <span className="nav-brand-by">by</span>
+        <img src={pitstopLogo} alt="Pit Stop" className="nav-logo-sub"/>
       </Link>
       <button className="nav-burger" aria-label="Menu" onClick={() => setOpen(o => !o)}>
         <span/><span/><span/>
@@ -413,7 +507,19 @@ function Nav() {
             {l.label}
           </NavLink>
         ))}
-        <Link to="/staff" className="nav-link nav-link--ghost">Staff</Link>
+        {roleLinks.map(l => (
+          <NavLink key={l.to} to={l.to} className={({isActive}) => `nav-link nav-link--role ${isActive ? 'is-active' : ''}`}>
+            {l.label}
+          </NavLink>
+        ))}
+        {loaded && user ? (
+          <span className="nav-user">
+            <Link to="/staff" className="nav-link nav-link--ghost" title={user.email}>Staff</Link>
+            <button className="nav-link nav-link--ghost" onClick={() => signOut(auth)}>Sign out</button>
+          </span>
+        ) : (
+          <Link to="/staff" className="nav-link nav-link--ghost">Sign in</Link>
+        )}
       </nav>
     </header>
   )
@@ -425,17 +531,18 @@ function Footer() {
       <CheckeredStrip height={4}/>
       <div className="footer-inner">
         <div className="footer-brand">
-          <PitStopBadge size={56}/>
-          <div>
-            <PitStopWordmark height={20}/>
-            <div className="footer-tag">Freelance Auto Services · San Andreas</div>
+          <img src={bennysLogo} alt="Benny's Original Motor Works" className="footer-logo"/>
+          <div className="footer-brand-sub">
+            <span className="nav-brand-by">by</span>
+            <img src={pitstopLogo} alt="Pit Stop" className="footer-logo-sub"/>
+            <div className="footer-tag">San Andreas</div>
           </div>
         </div>
         <div className="footer-cols">
           <div>
             <div className="footer-h">Location</div>
-            <div>SouthSide Car Wash</div>
-            <div className="t3">Pickup & drop-off anywhere in Los Santos</div>
+            <div>Benny's Original Motor Works</div>
+            <div className="t3">Pickup & drop-off still available anywhere in Los Santos</div>
           </div>
           <div>
             <div className="footer-h">Contact</div>
@@ -462,37 +569,120 @@ function Footer() {
 
 /* ─── HOME ─────────────────────────────────────────────────── */
 
+function BennysAnnounce() {
+  return (
+    <section className="bennys-announce">
+      <motion.div className="bennys-announce-card" {...fadeUp}>
+        <div className="bennys-announce-video-wrap">
+          <video
+            className="bennys-announce-video"
+            src={brandRevealVideo}
+            autoPlay muted loop playsInline
+            aria-label="Pit Stop's logo transforming into Benny's Original Motor Works"
+          />
+          {/* Masks the AI video tool's watermark in the corner — not part of the brand mark. */}
+          <div className="bennys-announce-video-mask" aria-hidden="true"/>
+        </div>
+        <div className="bennys-announce-body">
+          <div className="bennys-announce-kicker">Now opening · July 1st</div>
+          <h2 className="bennys-announce-title">A real shop, finally. Benny's is opening.</h2>
+          <p className="bennys-announce-sub">
+            To celebrate, we're giving away 10 cars on launch day across a full day of activities.
+            Two of them: every paid repair earns a raffle ticket, and so does every meal from our
+            friends at Soochi — both drawn live, day one.
+          </p>
+          <Link to="/services" className="btn btn--primary btn--magnetic">Book a repair →</Link>
+        </div>
+      </motion.div>
+    </section>
+  )
+}
+
+function ServiceBoard({ items, lg = false }) {
+  return (
+    <div className={`service-board ${lg ? 'service-board--lg' : ''}`}>
+      {items.map((s, i) => (
+        <motion.div key={s.name} className="service-row"
+          initial={{opacity:0, y:16}} whileInView={{opacity:1, y:0}}
+          viewport={{once:true, margin:'-40px'}}
+          transition={{duration:.45, delay: i*0.04}}>
+          <div className="service-row-ic"><s.Icon size={22}/></div>
+          <div className="service-row-body">
+            <div className="service-row-name">{s.name}</div>
+            <p className="service-row-desc">{s.desc}</p>
+          </div>
+          <div className="service-row-price">{s.price}</div>
+        </motion.div>
+      ))}
+    </div>
+  )
+}
+
+function ServiceTagRow({ items }) {
+  return (
+    <div className="service-tags">
+      {items.map(s => (
+        <div key={s.name} className="service-tag">
+          <s.Icon size={16}/>
+          <span>{s.name}</span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
+function CrewStrip({ roster }) {
+  return (
+    <div className="crew-strip">
+      {roster.map((m, i) => (
+        <motion.div key={m.id} className="crew-chip"
+          style={{ '--hue': m.hue }}
+          initial={{opacity:0, y:14}} whileInView={{opacity:1, y:0}}
+          viewport={{once:true, margin:'-40px'}}
+          transition={{duration:.45, delay: i*0.05}}>
+          <div className={`crew-chip-avatar ${m.avatar ? 'crew-chip-avatar--img' : ''}`} aria-hidden="true">
+            {m.avatar
+              ? <img src={m.avatar} alt={m.name}/>
+              : <span>{m.name.split(' ').map(x => x[0]).slice(0,2).join('')}</span>}
+          </div>
+          <div className="crew-chip-name">{m.name}</div>
+          <div className="crew-chip-role">{m.role}</div>
+        </motion.div>
+      ))}
+    </div>
+  )
+}
+
 function HomePage() {
+  const roster = useRoster()
   return (
     <main className="page page--home">
 
       <section className="hero">
-        <div className="hero-grid" aria-hidden="true"/>
+        <video className="hero-video-bg" src={heroGarageVideo} autoPlay muted loop playsInline aria-hidden="true"/>
+        <div className="hero-vignette" aria-hidden="true"/>
+        <div className="hero-video-mask" aria-hidden="true"/>
+        <HeroBackplate/>
+        <div className="hero-grain" aria-hidden="true"/>
         <div className="hero-orbs" aria-hidden="true">
-          <FloatingOrb x="10%"  y="20%" size={320} color="rgba(245,197,24,0.18)" delay={0}/>
-          <FloatingOrb x="75%"  y="65%" size={260} color="rgba(230,57,70,0.14)"  delay={2.5}/>
+          <FloatingOrb x="10%"  y="20%" size={320} color="rgba(230,57,70,0.16)" delay={0}/>
+          <FloatingOrb x="75%"  y="65%" size={260} color="rgba(230,57,70,0.12)" delay={2.5}/>
           <FloatingOrb x="55%"  y="10%" size={200} color="rgba(245,197,24,0.10)" delay={5}/>
         </div>
 
         <div className="hero-parts" aria-hidden="true">
-          <FloatingGear  x="72%" y="4%"  size={96}  teeth={10} dir={1}  delay={0}   spinDur={18} floatDur={8}/>
-          <FloatingGear  x="2%"  y="52%" size={72}  teeth={8}  dir={-1} delay={1.5} spinDur={22} floatDur={11}/>
-          <FloatingGear  x="52%" y="76%" size={46}  teeth={7}  dir={1}  delay={3.0} spinDur={13} floatDur={7}/>
-          <FloatingGear  x="30%" y="1%"  size={34}  teeth={6}  dir={-1} delay={4.5} spinDur={10} floatDur={9}/>
+          <FloatingGear  x="72%" y="4%"  size={96}  teeth={10} dir={1}  delay={0}   spinDur={20} floatDur={10}/>
+          <FloatingGear  x="2%"  y="52%" size={72}  teeth={8}  dir={-1} delay={1.5} spinDur={24} floatDur={12}/>
           <FloatingWrench x="86%" y="46%" size={58} delay={0.8}/>
-          <FloatingWrench x="5%"  y="8%"  size={42} delay={2.5}/>
           <FloatingBolt   x="46%" y="3%"  size={28} delay={0.4}/>
-          <FloatingBolt   x="90%" y="20%" size={22} delay={2.2}/>
-          <FloatingBolt   x="14%" y="78%" size={32} delay={3.8}/>
-          <FloatingNut    x="63%" y="86%" size={38} delay={1.2}/>
-          <FloatingNut    x="93%" y="68%" size={28} delay={3.0}/>
-          <FloatingNut    x="20%" y="22%" size={32} delay={5.5}/>
+          <FloatingNut    x="20%" y="22%" size={32} delay={2.5}/>
         </div>
         <Sparks/>
 
+        <div className="hero-content">
         <motion.div className="hero-eyebrow"
           initial={{opacity:0, y:8}} animate={{opacity:1, y:0}} transition={{duration:.5}}>
-          <span className="dot"/> <span className="hero-eyebrow-text">SouthSide Car Wash · Los Santos</span>
+          <span className="dot"/> <span className="hero-eyebrow-text">Benny's Original Motor Works · Los Santos</span>
         </motion.div>
 
         <motion.h1 className="hero-title"
@@ -501,8 +691,8 @@ function HomePage() {
             hidden: { opacity: 1 },
             visible: { opacity: 1, transition: { staggerChildren: 0.12, delayChildren: 0.1 } },
           }}>
-          {['Paleto’s busy.', 'Harmony’s full.'].map((line, i) => (
-            <motion.span key={i} className="hero-line"
+          {['Paleto’s far.', 'Harmony’s farther.'].map((line, i) => (
+            <motion.span key={i} className="hero-line hero-line--setup"
               variants={{
                 hidden:  { opacity: 0, y: 28, filter: 'blur(8px)' },
                 visible: { opacity: 1, y: 0,  filter: 'blur(0px)' },
@@ -517,14 +707,14 @@ function HomePage() {
               visible: { opacity: 1, y: 0,  filter: 'blur(0px)' },
             }}
             transition={{ duration: 0.8, ease: [0.22, 1, 0.36, 1] }}>
-            We come to you.
+            Benny's. Right here. Open now.
           </motion.span>
         </motion.h1>
 
         <motion.p className="hero-sub"
           initial={{opacity:0, y:12}} animate={{opacity:1, y:0}} transition={{duration:.7, delay:.55}}>
-          Pit Stop is a freelance civilian crew giving cars the full treatment — repair, Podium refuel, cleaning —
-          and dropping them back wherever you want. One flat $500 service fee, no matter the scope.
+          Pit Stop's first real shop, opening July 1st. Full repair, custom builds, performance upgrades,
+          detailing — walk in, or we'll still come to you. Flat fee, pricing announcing soon.
         </motion.p>
         <motion.div className="hero-cta"
           initial={{opacity:0, y:8}} animate={{opacity:1, y:0}} transition={{duration:.5, delay:.7}}>
@@ -535,12 +725,12 @@ function HomePage() {
         <motion.div className="hero-strip"
           initial={{opacity:0, y:14}} animate={{opacity:1, y:0}} transition={{duration:.6, delay:.85}}>
           <div className="strip-cell">
-            <b><AnimatedNumber value={250} prefix="$"/></b>
-            <span>flat service fee</span>
+            <b>Jul 1st</b>
+            <span>Benny's opens</span>
           </div>
           <div className="strip-cell">
-            <b>Podium</b>
-            <span>premium fuel available</span>
+            <b>Custom</b>
+            <span>builds & upgrades</span>
           </div>
           <div className="strip-cell">
             <b><AnimatedNumber value={24} suffix="/7"/></b>
@@ -551,80 +741,58 @@ function HomePage() {
             <span>core crew</span>
           </div>
         </motion.div>
+        </div>
       </section>
 
-      <Marquee speed={36} items={[
-        'Pit Stop', 'Full Repair', 'Podium Refuel', 'Wash & Cleaning',
-        'Pickup & Drop-off', 'Roadside Recovery', '$500 flat', 'Los Santos · 24/7',
-      ]}/>
+      <BennysAnnounce/>
 
-      <CheckeredStrip/>
-
-      <section className="section">
+      <section className="section section--services">
         <motion.div {...fadeUp} className="section-head">
           <div className="kicker">What we do</div>
           <h2 className="section-title">The full pit-stop, on demand.</h2>
           <p className="section-sub">
-            The existing options fill up fast and only run Normal fuel. Nobody picks the
+            The existing options fill up fast and barely touch builds. Nobody picks the
             car up. Nobody parks it for you. We close that gap end-to-end.
           </p>
         </motion.div>
 
-        <div className="cards">
-          {SERVICES.slice(0, 6).map((s, i) => (
-            <motion.div key={s.name} className="card service-card"
-              initial={{opacity:0, y:20}} whileInView={{opacity:1, y:0}}
-              viewport={{once:true, margin:'-40px'}}
-              transition={{duration:.5, delay: i*0.05}}>
-              <div className="card-ic">{s.ic}</div>
-              <div className="card-title">{s.name}</div>
-              <p className="card-body">{s.desc}</p>
-              <div className="card-price">{s.price}</div>
-            </motion.div>
-          ))}
+        <ServiceTagRow items={SERVICES}/>
+        <div className="section-foot">
+          <Link to="/services" className="btn btn--primary">Full services &amp; pricing →</Link>
         </div>
       </section>
-
-      <CheckeredStrip/>
 
       <section className="section section--alt">
         <motion.div {...fadeUp} className="section-head">
           <div className="kicker">The crew</div>
           <h2 className="section-title">The crew.</h2>
           <p className="section-sub">
-            A small civilian crew — owner, co-owner, mechanic, build expert, and the tech who keeps the lights on.
+            Real people, real specialties — mechanic work, builds, ops, and the tech keeping the lights on.
           </p>
         </motion.div>
 
-        <div className="team-grid">
-          {TEAM_SEED.map((m, i) => <TeamCard key={m.id} m={m} i={i}/>)}
-        </div>
+        <CrewStrip roster={roster.slice(0, 5)}/>
         <div className="section-foot">
-          <Link to="/team" className="btn btn--ghost">Full crew →</Link>
+          <Link to="/team" className="btn btn--ghost">Full bios →</Link>
         </div>
       </section>
-
-      <CheckeredStrip/>
 
       <section className="section">
         <motion.div {...fadeUp} className="section-head">
           <div className="kicker">Pricing</div>
-          <h2 className="section-title">Simple. Honest. On the board.</h2>
+          <h2 className="section-title">New shop, new board.</h2>
         </motion.div>
 
         <div className="price-board">
-          <div className="price-row"><span>Service fee (flat, any scope)</span><b>$500</b></div>
-          <div className="price-row"><span>Repair (body, engine parts, suspension…)</span><b>At cost</b></div>
-          <div className="price-row"><span>Fuel</span><b>At cost</b></div>
+          <div className="price-row"><span>Service fee (flat, any scope)</span><b>TBA</b></div>
+          <div className="price-row"><span>Repair, builds & upgrades (parts)</span><b>At cost</b></div>
           <div className="price-row"><span>Pickup &amp; drop-off</span><b>Included</b></div>
           <div className="price-row price-row--total">
             <span>What you pay</span>
-            <b className="t2">$500 service · plus whatever the actual repair and fuel cost.</b>
+            <b className="t2">Pricing is being finalized for Benny's opening — announcing soon. Parts are always passed through at cost.</b>
           </div>
         </div>
       </section>
-
-      <CheckeredStrip/>
 
       <section className="section">
         <motion.div {...fadeUp} className="section-head">
@@ -635,8 +803,6 @@ function HomePage() {
           {FAQ.map((f, i) => <FaqItem key={i} q={f.q} a={f.a}/>)}
         </div>
       </section>
-
-      <CheckeredStrip/>
 
       <section className="section section--cta">
         <motion.div {...fadeUp} className="cta-card">
@@ -661,6 +827,7 @@ function TeamCard({ m, i = 0 }) {
       initial={{opacity:0, y:20}} whileInView={{opacity:1, y:0}}
       viewport={{once:true, margin:'-40px'}}
       transition={{duration:.5, delay: i*0.05}}>
+      <div className="team-card-corner" aria-hidden="true"/>
       <div className={`team-avatar ${m.avatar ? 'team-avatar--img' : ''}`} aria-hidden="true">
         {m.avatar
           ? <img src={m.avatar} alt={m.name}/>
@@ -668,7 +835,7 @@ function TeamCard({ m, i = 0 }) {
       </div>
       <div className="team-meta">
         <div className="team-name">{m.name}</div>
-        <div className="team-role">{m.role}</div>
+        <span className="team-role-pill">{m.role}</span>
         <p className="team-bio">{m.bio}</p>
       </div>
     </motion.div>
@@ -704,25 +871,13 @@ function ServicesPage() {
   return (
     <main className="page">
       <PageHeader kicker="Services" title="Everything we do, on the board.">
-        Pick a single service or grab the full Pit Stop Package. Either way it&apos;s a flat
-        $500 service fee — pickup, work, clean, and drop-off included. Repair and fuel
-        are passed through at cost.
+        Repair, custom builds, performance upgrades, or just a wash — pick what you need. It&apos;s a flat
+        service fee either way — pickup, work, clean, and drop-off included — pricing announcing soon
+        for Benny's opening. Parts are passed through at cost.
       </PageHeader>
 
-      <section className="section">
-        <div className="cards">
-          {SERVICES.map((s, i) => (
-            <motion.div key={s.name} className="card service-card service-card--lg"
-              initial={{opacity:0, y:20}} whileInView={{opacity:1, y:0}}
-              viewport={{once:true, margin:'-40px'}}
-              transition={{duration:.5, delay: i*0.04}}>
-              <div className="card-ic">{s.ic}</div>
-              <div className="card-title">{s.name}</div>
-              <p className="card-body">{s.desc}</p>
-              <div className="card-price">{s.price}</div>
-            </motion.div>
-          ))}
-        </div>
+      <section className="section section--services">
+        <ServiceBoard items={SERVICES} lg/>
       </section>
 
       <section className="section">
@@ -731,9 +886,9 @@ function ServicesPage() {
           <ol className="proc-list">
             <li><b>Book.</b> Drop your name, plate, and where the car is.</li>
             <li><b>Pickup.</b> A crew member rolls out and collects the vehicle.</li>
-            <li><b>Work.</b> Repair, refuel, cleaning — whichever scope you asked for.</li>
+            <li><b>Work.</b> Repair, builds, upgrades, cleaning — whichever scope you asked for.</li>
             <li><b>Drop.</b> Parked in whichever public garage you choose.</li>
-            <li><b>Bill.</b> Flat $500 service + repair + fuel at cost. Paid on delivery.</li>
+            <li><b>Bill.</b> Flat service fee (TBA) + parts at cost. Paid on delivery.</li>
           </ol>
         </div>
       </section>
@@ -744,20 +899,12 @@ function ServicesPage() {
 /* ─── TEAM ─────────────────────────────────────────────────── */
 
 function TeamPage() {
-  const [roster, setRoster] = useState(TEAM_SEED)
-
-  useEffect(() => {
-    const unsub = onSnapshot(query(collection(db, 'pitstop_roster'), orderBy('order')), snap => {
-      const live = snap.docs.map(d => ({ id: d.id, ...d.data() }))
-      if (live.length) setRoster(live)
-    }, () => { /* offline / not configured — fall back to seed */ })
-    return unsub
-  }, [])
+  const roster = useRoster()
 
   return (
     <main className="page">
-      <PageHeader kicker="Crew" title="The people behind Pit Stop.">
-        A small civilian crew with real specialties — mechanic work, build expertise, ops, and tech. Tyson also works at Luxury Autos as a car dealer.
+      <PageHeader kicker="Crew" title="The people behind Benny's.">
+        The Pit Stop crew, now running a real shop. Real specialties — mechanic work, build expertise, ops, and tech. Tyson also works at Luxury Autos as a car dealer.
       </PageHeader>
 
       <section className="section">
@@ -823,7 +970,7 @@ function RequestPage() {
     }
   }
 
-  const scopes = ['Full Repair', 'Podium Refuel', 'Wash & Cleaning', 'Roadside Recovery', 'Pickup & Drop-off']
+  const scopes = ['Full Repair', 'Custom Build / Upgrade', 'Wash & Cleaning', 'Roadside Recovery', 'Pickup & Drop-off']
 
   return (
     <main className="page">
@@ -835,10 +982,10 @@ function RequestPage() {
         <motion.div className="services-app-callout" {...fadeUp}>
           <div className="sa-icon" aria-hidden="true">
             <svg viewBox="0 0 64 64" fill="none">
-              <rect x="18" y="6" width="28" height="52" rx="6" fill="#0B0B0F" stroke="#F5C518" strokeWidth="2.5"/>
+              <rect x="18" y="6" width="28" height="52" rx="6" fill="#0B0B0F" stroke="#E63946" strokeWidth="2.5"/>
               <rect x="22" y="12" width="20" height="32" rx="2" fill="#15171C"/>
-              <circle cx="32" cy="51" r="2.5" fill="#F5C518"/>
-              <path d="M27 22 L32 27 L37 22 M32 27 L32 38" stroke="#F5C518" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
+              <circle cx="32" cy="51" r="2.5" fill="#E63946"/>
+              <path d="M27 22 L32 27 L37 22 M32 27 L32 38" stroke="#E63946" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" fill="none"/>
             </svg>
           </div>
           <div className="sa-body">
@@ -912,7 +1059,7 @@ function RequestPage() {
           <label className="field">
             <span>Anything else?</span>
             <textarea value={form.notes} onChange={e => setForm({...form, notes: e.target.value})} rows={3}
-              placeholder="Bring fuel cans / brake mod / leaving car keys with valet…"/>
+              placeholder="Brake mod / specific parts you already have / leaving car keys with valet…"/>
           </label>
 
           <div className="form-foot">
@@ -1085,13 +1232,13 @@ function Modal({ open, onClose, children, title, wide }) {
     <AnimatePresence>
       {open && (
         <motion.div className="modal" onClick={onClose}
-          initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}
+          initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0, transition:{duration:.14}}}
           transition={{duration:.2}}>
           <motion.div className={`modal-card ${wide ? 'modal-card--wide' : ''}`}
             onClick={e => e.stopPropagation()}
             initial={{opacity:0, y:14, scale:.98}}
             animate={{opacity:1, y:0,  scale:1}}
-            exit={{opacity:0, y:14, scale:.98}}
+            exit={{opacity:0, y:8, scale:.98, transition:{duration:.15, ease:[0.4,0,1,1]}}}
             transition={{duration:.22, ease:[0.22, 1, 0.36, 1]}}>
             <div className="modal-head">
               <div className="modal-title">{title}</div>
@@ -1137,13 +1284,13 @@ function Lightbox({ lightbox, onClose, onChange }) {
     <AnimatePresence>
       {lightbox && img && (
         <motion.div className="lightbox" onClick={onClose}
-          initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0}}
+          initial={{opacity:0}} animate={{opacity:1}} exit={{opacity:0, transition:{duration:.14}}}
           transition={{duration:.2}}>
 
           <motion.div className="lightbox-card" onClick={e => e.stopPropagation()}
             initial={{opacity:0, scale:.96, y:10}}
             animate={{opacity:1, scale:1,   y:0}}
-            exit={{opacity:0, scale:.96, y:10}}
+            exit={{opacity:0, scale:.97, y:6, transition:{duration:.15, ease:[0.4,0,1,1]}}}
             transition={{duration:.22, ease:[0.22, 1, 0.36, 1]}}>
 
             <div className="lightbox-bar">
@@ -1201,7 +1348,7 @@ const EMPTY_LOG = {
   clientName: '', vehicle: '', plate: '',
   jobDate: todayISO(),
   scope: [],
-  costBreakdown: { repair: '', fuel: '', fuelType: 'Podium', serviceFee: 500, extras: '', extrasLabel: '' },
+  costBreakdown: { repair: '', serviceFee: '', extras: '', extrasLabel: '' },
   evidence: { bill: '', before: '', after: '' },
   extraImages: [],
   handledBy: '', notes: '',
@@ -1218,9 +1365,7 @@ function logToDraft(log) {
     scope:      log.scope      || [],
     costBreakdown: {
       repair:      log.costBreakdown?.repair ?? log.costBreakdown?.parts ?? '',
-      fuel:        log.costBreakdown?.fuel ?? '',
-      fuelType:    log.costBreakdown?.fuelType || 'Podium',
-      serviceFee:  log.costBreakdown?.serviceFee ?? 500,
+      serviceFee:  log.costBreakdown?.serviceFee ?? '',
       extras:      log.costBreakdown?.extras ?? '',
       extrasLabel: log.costBreakdown?.extrasLabel || '',
     },
@@ -1239,7 +1384,7 @@ function logToDraft(log) {
 function logTotal(log) {
   const cb = log.costBreakdown || {}
   const repair = +(cb.repair ?? cb.parts ?? 0) || 0
-  return log.total ?? (repair + (+cb.fuel || 0) + (+cb.serviceFee || 0) + (+cb.extras || 0))
+  return log.total ?? (repair + (+cb.serviceFee || 0) + (+cb.extras || 0))
 }
 
 function WorkLogPage() {
@@ -1344,11 +1489,9 @@ function WorkLogPage() {
 
         {!loaded && <div className="loading">Loading…</div>}
         {loaded && filtered.length === 0 && (
-          <div className="empty">
-            {logs.length === 0
-              ? 'No jobs logged yet. Once the crew completes work it shows up here.'
-              : 'No jobs match that filter.'}
-          </div>
+          logs.length === 0
+            ? <EmptyState icon={IconWrench} title="No jobs logged yet" subtitle="Once the crew completes work, it shows up here."/>
+            : <div className="empty">No jobs match that filter.</div>
         )}
 
         <div className="log-grid">
@@ -1395,7 +1538,7 @@ function LogCard({ log, index, onView, canEdit, onEdit, onDelete, billMode, isSe
   const extras = log.extraImages || []
   const cb = log.costBreakdown || {}
   const repairCost = cb.repair ?? cb.parts
-  const total = log.total ?? ((+repairCost || 0) + (+cb.fuel || 0) + (+cb.serviceFee || 0) + (+cb.extras || 0))
+  const total = log.total ?? ((+repairCost || 0) + (+cb.serviceFee || 0) + (+cb.extras || 0))
   const num = String(index).padStart(4, '0')
   const dateSource = log.jobDate ? new Date(log.jobDate + 'T00:00:00') : (log.createdAt?.toDate ? log.createdAt.toDate() : null)
   const date = dateSource ? dateSource.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : ''
@@ -1459,9 +1602,6 @@ function LogCard({ log, index, onView, canEdit, onEdit, onDelete, billMode, isSe
         {repairCost != null && +repairCost !== 0 && (
           <div className="log-receipt-row"><span>Repair</span><span className="dots"/><b>${(+repairCost).toLocaleString()}</b></div>
         )}
-        {cb.fuel != null && +cb.fuel !== 0 && (
-          <div className="log-receipt-row"><span>{cb.fuelType ? `${cb.fuelType} fuel` : 'Fuel'}</span><span className="dots"/><b>${(+cb.fuel).toLocaleString()}</b></div>
-        )}
         {cb.serviceFee != null && +cb.serviceFee !== 0 && (
           <div className="log-receipt-row"><span>Service fee</span><span className="dots"/><b>${(+cb.serviceFee).toLocaleString()}</b></div>
         )}
@@ -1522,13 +1662,12 @@ function LogCard({ log, index, onView, canEdit, onEdit, onDelete, billMode, isSe
 function buildReceipt(log) {
   const cb     = log.costBreakdown || {}
   const repair = +(cb.repair ?? cb.parts ?? 0) || 0
-  const fuel   = +cb.fuel       || 0
   const fee    = +cb.serviceFee || 0
   const extras = +cb.extras     || 0
   const ev     = log.evidence   || {}
   const extraImages = (log.extraImages || []).filter(x => x.url)
 
-  const numbers   = [repair, fuel, fee, extras].filter(n => n > 0)
+  const numbers   = [repair, fee, extras].filter(n => n > 0)
   const total     = log.total ?? numbers.reduce((s, n) => s + n, 0)
   const totalExpr = numbers.length > 0 ? numbers.join(' +') : '0'
 
@@ -1582,7 +1721,7 @@ function ShareReceiptButton({ log, compact = false }) {
 
 /* ─── Log form (used by Work Log modal) ────────────────────── */
 
-const SCOPES = ['Full Repair', 'Normal Repair', 'Podium Refuel', 'Normal Refuel', 'Wash & Cleaning', 'Roadside Recovery', 'Pickup & Drop-off']
+const SCOPES = ['Full Repair', 'Normal Repair', 'Custom Build', 'Performance Upgrade', 'Wash & Cleaning', 'Roadside Recovery', 'Pickup & Drop-off']
 
 function LogForm({ user, existing, onDone }) {
   const [draft, setDraft] = useState(() => logToDraft(existing))
@@ -1604,7 +1743,7 @@ function LogForm({ user, existing, onDone }) {
 
   const total = useMemo(() => {
     const cb = draft.costBreakdown || {}
-    return (+cb.repair || 0) + (+cb.fuel || 0) + (+cb.serviceFee || 0) + (+cb.extras || 0)
+    return (+cb.repair || 0) + (+cb.serviceFee || 0) + (+cb.extras || 0)
   }, [draft])
 
   const toggleScope = s => setDraft(d => ({
@@ -1636,8 +1775,6 @@ function LogForm({ user, existing, onDone }) {
       scope:      draft.scope,
       costBreakdown: {
         repair:      +cb.repair || 0,
-        fuel:        +cb.fuel  || 0,
-        fuelType:    cb.fuelType || '',
         serviceFee:  +cb.serviceFee || 0,
         extras:      +cb.extras || 0,
         extrasLabel: cb.extrasLabel || '',
@@ -1707,27 +1844,15 @@ function LogForm({ user, existing, onDone }) {
 
       <div className="form-card">
         <div className="form-card-h">
-          <span className="form-card-h-ic">💰</span>
+          <span className="form-card-h-ic"><IconCash size={16}/></span>
           <span>Cost breakdown</span>
         </div>
         <div className="form-row">
-          <label className="field"><span>Repair ($)</span>
+          <label className="field"><span>Repair / parts ($)</span>
             <input type="number" value={draft.costBreakdown.repair} onChange={e => cbField('repair', e.target.value)} placeholder="1605"/>
           </label>
-          <label className="field"><span>Fuel ($)</span>
-            <input type="number" value={draft.costBreakdown.fuel} onChange={e => cbField('fuel', e.target.value)} placeholder="267"/>
-          </label>
-        </div>
-        <div className="form-row">
-          <label className="field"><span>Fuel type</span>
-            <select value={draft.costBreakdown.fuelType} onChange={e => cbField('fuelType', e.target.value)}>
-              <option value="">—</option>
-              <option value="Podium">Podium (premium)</option>
-              <option value="Normal">Normal</option>
-            </select>
-          </label>
           <label className="field"><span>Service fee ($)</span>
-            <input type="number" value={draft.costBreakdown.serviceFee} onChange={e => cbField('serviceFee', e.target.value)} placeholder="500"/>
+            <input type="number" value={draft.costBreakdown.serviceFee} onChange={e => cbField('serviceFee', e.target.value)} placeholder="0"/>
           </label>
         </div>
         <div className="form-row">
@@ -1743,7 +1868,6 @@ function LogForm({ user, existing, onDone }) {
           <div className="form-total-formula">
             {[
               { v: +draft.costBreakdown.repair     || 0, label: 'Repair'  },
-              { v: +draft.costBreakdown.fuel       || 0, label: 'Fuel'    },
               { v: +draft.costBreakdown.serviceFee || 0, label: 'Service' },
               { v: +draft.costBreakdown.extras     || 0, label: draft.costBreakdown.extrasLabel || 'Extras' },
             ].filter(x => x.v > 0).map((x, i, arr) => (
@@ -1761,7 +1885,7 @@ function LogForm({ user, existing, onDone }) {
 
       <div className="form-card">
         <div className="form-card-h">
-          <span className="form-card-h-ic">📷</span>
+          <span className="form-card-h-ic"><IconCamera size={16}/></span>
           <span>Evidence</span>
           {vgyToken && <span className="form-card-h-badge">vgy.me</span>}
         </div>
@@ -1866,7 +1990,7 @@ function GalleryPage() {
 
         {!loaded && <div className="loading">Loading…</div>}
         {loaded && photos.length === 0 && (
-          <div className="empty">No photos posted yet. Check back soon.</div>
+          <EmptyState icon={IconCamera} title="No photos posted yet" subtitle="Check back soon — the crew posts shots after every job."/>
         )}
 
         <div className="gallery-grid">
@@ -1958,17 +2082,18 @@ function PitchPage() {
           <PitchBlock n="01" t="The market gap is verifiable.">
             Only a handful of mechanic operations are running right now, and the ones that are
             operate at the geographic edges — inconvenient for the bulk of the Los Santos
-            population. None of them offer Podium-grade refueling. None will pick up, drop off,
-            or clean. There is a permanent service backlog and no premium tier.
+            population. None of them touch custom builds or performance upgrades. None will pick
+            up, drop off, or clean. There is a permanent service backlog and no premium tier.
           </PitchBlock>
           <PitchBlock n="02" t="Pit Stop is the premium tier.">
             We&apos;re not trying to replace what exists — we wrap it. The customer talks to one team.
-            That team handles pickup, supervises the actual repair, handles premium refuel,
-            cleans the car, and parks it in the customer&apos;s garage of choice.
+            That team handles pickup, supervises the actual repair or build, cleans the car,
+            and parks it in the customer&apos;s garage of choice.
           </PitchBlock>
           <PitchBlock n="03" t="A flat, transparent fee.">
-            $500 service fee, flat, regardless of scope. Repair and fuel are passed through at
-            cost — no markup, no surprises. The customer sees exactly what they&apos;re paying for.
+            One service fee, flat, regardless of scope (the exact rate is being finalized for
+            Benny's opening). Parts are passed through at cost — no markup, no
+            surprises. The customer sees exactly what they&apos;re paying for.
           </PitchBlock>
           <PitchBlock n="04" t="A civilian crew with real specialties.">
             Five members, each with a defined role. Masoom owns the operation. Zara co-runs it
@@ -2058,38 +2183,67 @@ function StaffPage() {
   return <StaffDashboard user={user} role={role}/>
 }
 
+function PortalDashboard({ user, role }) {
+  const cards = [
+    { to: '?view=requests', icon: IconFlag,    title: 'Job Board',  desc: 'Open requests from customers. Accept, finish, or cancel.', staffNav: true },
+    { to: '?view=reviews',  icon: IconStar,    title: 'Reviews',    desc: 'Moderate customer reviews before they go public.', staffNav: true },
+    { to: '/work-log',      icon: IconCash,    title: 'Work Log',   desc: 'Log completed jobs — evidence, billing, who handled it.' },
+    { to: '/gallery',       icon: IconCamera,  title: 'Gallery',    desc: 'Post photos of finished cars for the public site.' },
+    canRepairTokens(user, role) && { to: '/bennys', icon: IconWrench, title: "Benny's Tickets", desc: 'Issue a giveaway ticket per paid repair.' },
+    canFoodTokens(user, role)   && { to: '/soochi', icon: IconWash,   title: 'Soochi Tickets',   desc: 'Add a giveaway ticket per meal sold.' },
+    isAdmin(user, role) && { to: '/admin', icon: IconUpgrade, title: 'Admin Panel', desc: 'Roster, users, the giveaway, and settings.' },
+    isAdmin(user, role) && { to: '/repair-draw', icon: IconGauge, title: 'Repair Lucky Draw', desc: 'Live spin, stream-ready.', external: true },
+    isAdmin(user, role) && { to: '/soochi-draw', icon: IconGauge, title: 'Soochi Lucky Draw', desc: 'Live spin, stream-ready.', external: true },
+  ].filter(Boolean)
+
+  return (
+    <div className="portal-grid">
+      {cards.map(c => (
+        <Link key={c.to} to={c.staffNav ? `/staff${c.to}` : c.to}
+          target={c.external ? '_blank' : undefined} rel={c.external ? 'noreferrer' : undefined}
+          className="portal-card">
+          <div className="portal-card-ic"><c.icon size={22}/></div>
+          <div className="portal-card-title">{c.title}</div>
+          <div className="portal-card-desc">{c.desc}</div>
+        </Link>
+      ))}
+    </div>
+  )
+}
+
 function StaffDashboard({ user, role }) {
   const loc = useLocation()
-  const initial = new URLSearchParams(loc.search).get('view')
-  const [view, setView] = useState(initial === 'reviews' ? 'reviews' : 'requests')
+  const nav = useNavigate()
+  // The tab is derived straight from the URL (not local state) so portal-
+  // dashboard card links (?view=requests) and the tab buttons stay in sync
+  // automatically, including when navigating to the same route.
+  const queryView = new URLSearchParams(loc.search).get('view')
+  const view = queryView === 'reviews' ? 'reviews' : queryView === 'requests' ? 'requests' : 'dashboard'
+  const setView = v => nav(v === 'dashboard' ? '/staff' : `/staff?view=${v}`)
 
-  const title = view === 'reviews' ? 'Reviews.' : 'Job board.'
-  const sub   = view === 'reviews'
-    ? 'Moderate customer reviews. Approve to make them public; delete or unapprove anytime.'
-    : 'Open requests from customers. Accept, mark done, or cancel.'
+  const titles = {
+    dashboard: { title: 'Welcome back.', sub: "Everything your account can do, in one place." },
+    requests:  { title: 'Job board.',    sub: 'Open requests from customers. Accept, mark done, or cancel.' },
+    reviews:   { title: 'Reviews.',      sub: 'Moderate customer reviews. Approve to make them public; delete or unapprove anytime.' },
+  }
+  const { title, sub } = titles[view]
 
   return (
     <main className="page">
       <PageHeader kicker="Staff" title={title}>{sub}</PageHeader>
 
       <section className="section">
-        <div className="staff-bar">
-          <div className="staff-user">
-            <span className="dot dot--ok"/> Signed in as <b>{user.email}</b>
-          </div>
-          <div className="staff-actions">
-            <Link to="/work-log" className="btn btn--ghost btn--sm">Work Log →</Link>
-            {isAdmin(user, role) && <Link to="/admin" className="btn btn--ghost btn--sm">Admin</Link>}
-            <button className="btn btn--ghost btn--sm" onClick={() => signOut(auth)}>Sign out</button>
-          </div>
-        </div>
+        <StaffToolbar user={user}/>
 
         <div className="tabs tabs--main">
+          <button className={`tab ${view === 'dashboard' ? 'is-on' : ''}`} onClick={() => setView('dashboard')}>Dashboard</button>
           <button className={`tab ${view === 'requests' ? 'is-on' : ''}`} onClick={() => setView('requests')}>Requests</button>
           <button className={`tab ${view === 'reviews'  ? 'is-on' : ''}`} onClick={() => setView('reviews')}>Reviews</button>
         </div>
 
-        {view === 'requests' ? <StaffRequests/> : <StaffReviews/>}
+        {view === 'dashboard' && <PortalDashboard user={user} role={role}/>}
+        {view === 'requests'  && <StaffRequests/>}
+        {view === 'reviews'   && <StaffReviews/>}
       </section>
     </main>
   )
@@ -2259,7 +2413,7 @@ function ReviewsPage() {
 
         {!loaded && <div className="loading">Loading…</div>}
         {loaded && reviews.length === 0 && (
-          <div className="empty">No reviews yet. Be the first to leave one below.</div>
+          <EmptyState icon={IconStar} title="No reviews yet" subtitle="Be the first to leave one below."/>
         )}
 
         <div className="review-grid">
@@ -2435,6 +2589,234 @@ function StaffReviews() {
   )
 }
 
+/* ─── BENNY'S LAUNCH GIVEAWAY (token issuance) ─────────────── */
+
+function GiveawayPageHeader({ kicker, title, children }) {
+  return (
+    <>
+      <div className="giveaway-logo-wrap">
+        <img src={bennysLogo} alt="Benny's Original Motor Works" className="giveaway-logo"/>
+      </div>
+      <PageHeader kicker={kicker} title={title}>{children}</PageHeader>
+    </>
+  )
+}
+
+function GiveawayIssuePage({ channel, canIssue, kicker, deniedLabel, title, sub, nameLabel, namePlaceholder, showNote, noteLabel, notePlaceholder, showQuantity }) {
+  const { user, role, loaded } = useAuth()
+  const [email, setEmail] = useState('')
+  const [pw, setPw] = useState('')
+  const [err, setErr] = useState('')
+
+  const submitLogin = async e => {
+    e.preventDefault(); setErr('')
+    try { await signInWithEmailAndPassword(auth, email, pw) }
+    catch { setErr('Wrong email or password.') }
+  }
+
+  if (!loaded) return <main className="page"><div className="loading">Loading…</div></main>
+
+  if (!user) return (
+    <main className="page">
+      <GiveawayPageHeader kicker={kicker} title="Sign in.">{sub}</GiveawayPageHeader>
+      <section className="section section--narrow">
+        <form className="form" onSubmit={submitLogin}>
+          <label className="field">
+            <span>Email</span>
+            <input value={email} onChange={e => setEmail(e.target.value)} type="email" placeholder="you@pitstop.gg"/>
+          </label>
+          <label className="field">
+            <span>Password</span>
+            <input value={pw} onChange={e => setPw(e.target.value)} type="password" placeholder="••••••••"/>
+          </label>
+          <div className="form-foot">
+            <button className="btn btn--primary" type="submit">Sign in</button>
+            {err && <span className="form-err">{err}</span>}
+          </div>
+        </form>
+      </section>
+    </main>
+  )
+
+  if (role === undefined) return <main className="page"><div className="loading">Loading…</div></main>
+
+  if (!canIssue(user, role)) return (
+    <main className="page">
+      <GiveawayPageHeader kicker={kicker} title="Not authorized.">
+        Signed in as <b>{user.email}</b>, but this account can&apos;t issue {deniedLabel} tokens.
+      </GiveawayPageHeader>
+      <section className="section section--narrow center">
+        <button className="btn btn--ghost" onClick={() => signOut(auth)}>Sign out</button>
+      </section>
+    </main>
+  )
+
+  return (
+    <TokenIssuer
+      user={user} channel={channel} kicker={kicker} title={title} sub={sub}
+      nameLabel={nameLabel} namePlaceholder={namePlaceholder}
+      showNote={showNote} noteLabel={noteLabel} notePlaceholder={notePlaceholder}
+      showQuantity={showQuantity}
+    />
+  )
+}
+
+function TicketTable({ tickets, showNote, noteLabel }) {
+  return (
+    <div className="ticket-table-wrap">
+      <table className="ticket-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Code</th>
+            <th>Name</th>
+            {showNote && <th>{noteLabel || 'Note'}</th>}
+            <th>Time</th>
+          </tr>
+        </thead>
+        <tbody>
+          {tickets.length === 0 && (
+            <tr><td colSpan={showNote ? 5 : 4} className="empty">No tickets issued yet.</td></tr>
+          )}
+          {tickets.map((t, i) => (
+            <tr key={t.id}>
+              <td>{i + 1}</td>
+              <td className="ticket-table-code">{t.code}</td>
+              <td>{t.name}</td>
+              {showNote && <td>{t.note || '—'}</td>}
+              <td>{t.createdAt?.toDate ? t.createdAt.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
+function TokenIssuer({ user, channel, kicker, title, sub, nameLabel, namePlaceholder, showNote, noteLabel, notePlaceholder, showQuantity }) {
+  const [name, setName] = useState('')
+  const [note, setNote] = useState('')
+  const [quantity, setQuantity] = useState(1)
+  const [status, setStatus] = useState({ state: 'idle', msg: '' })
+  const [lastCodes, setLastCodes] = useState([])
+  const [tickets, setTickets] = useState([])
+  const nameRef = useRef(null)
+
+  useEffect(() => {
+    const unsub = onSnapshot(
+      query(collection(db, 'bennys_tokens'), where('channel', '==', channel)),
+      snap => {
+        const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+        docs.sort((a, b) => (b.createdAt?.seconds ?? 0) - (a.createdAt?.seconds ?? 0))
+        setTickets(docs)
+      },
+      err => console.error('[giveaway] read failed:', err)
+    )
+    return unsub
+  }, [channel])
+
+  const issue = async e => {
+    e.preventDefault()
+    if (!name.trim()) { setStatus({ state: 'err', msg: 'Enter a name first.' }); return }
+    const qty = showQuantity ? Math.max(1, Math.min(50, +quantity || 1)) : 1
+    setStatus({ state: 'sending', msg: '' })
+    try {
+      const codes = []
+      for (let i = 0; i < qty; i++) {
+        codes.push(await issueGiveawayToken({ channel, name, note, issuer: user }))
+      }
+      setLastCodes(codes)
+      setStatus({ state: 'ok', msg: '' })
+      setName(''); setNote(''); setQuantity(1)
+      nameRef.current?.focus()
+    } catch (err) {
+      setStatus({ state: 'err', msg: err.message || 'Could not issue token.' })
+    }
+  }
+
+  return (
+    <main className="page">
+      <GiveawayPageHeader kicker={kicker} title={title}>{sub}</GiveawayPageHeader>
+      <section className="section section--narrow">
+        <StaffToolbar user={user}/>
+
+        <form className="form" onSubmit={issue}>
+          <div className="form-row">
+            <label className="field">
+              <span>{nameLabel}</span>
+              <input ref={nameRef} value={name} onChange={e => setName(e.target.value)} placeholder={namePlaceholder} autoFocus/>
+            </label>
+            {showQuantity && (
+              <label className="field">
+                <span>How many meals</span>
+                <input type="number" min="1" max="50" value={quantity}
+                  onChange={e => setQuantity(e.target.value)}/>
+              </label>
+            )}
+          </div>
+          {showNote && (
+            <label className="field">
+              <span>{noteLabel}</span>
+              <input value={note} onChange={e => setNote(e.target.value)} placeholder={notePlaceholder}/>
+            </label>
+          )}
+          <div className="form-foot">
+            <button className="btn btn--primary" type="submit" disabled={status.state === 'sending'}>
+              {status.state === 'sending' ? 'Issuing…' : showQuantity && +quantity > 1 ? `Issue ${quantity} tokens →` : 'Issue token →'}
+            </button>
+            {status.state === 'err' && <span className="form-err">{status.msg}</span>}
+          </div>
+        </form>
+
+        {lastCodes.length > 0 && (
+          <div className="ticket-reveal">
+            <div className="ticket-reveal-label">{lastCodes.length > 1 ? `${lastCodes.length} tickets issued` : 'Ticket issued'}</div>
+            <div className="ticket-reveal-code">{lastCodes.join(' · ')}</div>
+          </div>
+        )}
+
+        <div className="log-list-h">Today&apos;s tickets · {tickets.length}</div>
+        <TicketTable tickets={tickets} showNote={showNote} noteLabel={noteLabel}/>
+      </section>
+    </main>
+  )
+}
+
+function BennysPage() {
+  return (
+    <GiveawayIssuePage
+      channel="repair"
+      canIssue={canRepairTokens}
+      kicker="Benny's"
+      deniedLabel="Benny's"
+      title="Issue a giveaway token."
+      sub="One token per paid repair. Enter the customer's name — the code is their raffle ticket for the launch-day car giveaway."
+      nameLabel="Customer name"
+      namePlaceholder="Maria Chen"
+      showNote
+      noteLabel="Vehicle / plate (optional)"
+      notePlaceholder="Sultan Classic Custom · 36UX0NUO"
+    />
+  )
+}
+
+function SoochiPage() {
+  return (
+    <GiveawayIssuePage
+      channel="food"
+      canIssue={canFoodTokens}
+      kicker="Soochi"
+      deniedLabel="Soochi"
+      title="Add a giveaway token."
+      sub="One token per meal purchase. Buying again? Add the same name again — every purchase is another ticket."
+      nameLabel="Buyer name"
+      namePlaceholder="Maria Chen"
+      showNote={false}
+      showQuantity
+    />
+  )
+}
+
 /* ─── ADMIN (admin-only roster + users) ────────────────────── */
 
 function AdminPage() {
@@ -2459,12 +2841,80 @@ function AdminPage() {
   return <AdminInner user={user}/>
 }
 
+// Standalone, chrome-free draw page for one channel — meant to be put up
+// full-screen on stream during the live draw, separate from the admin panel
+// where both pools sit side by side for bookkeeping.
+function AdminDrawPage({ channel, label }) {
+  const { user, role, loaded } = useAuth()
+  const [email, setEmail] = useState('')
+  const [pw, setPw] = useState('')
+  const [err, setErr] = useState('')
+
+  const submitLogin = async e => {
+    e.preventDefault(); setErr('')
+    try { await signInWithEmailAndPassword(auth, email, pw) }
+    catch { setErr('Wrong email or password.') }
+  }
+
+  if (!loaded) return <main className="draw-page"><div className="loading">Loading…</div></main>
+
+  // No redirect — this URL is meant to be opened directly (e.g. as an OBS
+  // browser source) and sign in right here, not bounce through /staff.
+  if (!user) return (
+    <main className="draw-page">
+      <div className="draw-page-stage">
+        <form className="form" onSubmit={submitLogin}>
+          <div className="form-h">{label} — admin sign-in</div>
+          <label className="field">
+            <span>Email</span>
+            <input value={email} onChange={e => setEmail(e.target.value)} type="email" placeholder="you@pitstop.gg" autoFocus/>
+          </label>
+          <label className="field">
+            <span>Password</span>
+            <input value={pw} onChange={e => setPw(e.target.value)} type="password" placeholder="••••••••"/>
+          </label>
+          <div className="form-foot">
+            <button className="btn btn--primary" type="submit">Sign in</button>
+            {err && <span className="form-err">{err}</span>}
+          </div>
+        </form>
+      </div>
+    </main>
+  )
+
+  if (role === undefined) return <main className="draw-page"><div className="loading">Loading…</div></main>
+
+  if (!isAdmin(user, role)) return (
+    <main className="draw-page">
+      <div className="draw-page-stage">
+        <div className="empty">Signed in as <b>{user.email}</b>, but this account doesn&apos;t have admin access.</div>
+        <div className="form-foot" style={{justifyContent: 'center', marginTop: '1rem'}}>
+          <button className="btn btn--ghost" onClick={() => signOut(auth)}>Sign out</button>
+        </div>
+      </div>
+    </main>
+  )
+
+  return (
+    <main className="draw-page">
+      <Link to="/admin" className="draw-page-back">← Admin</Link>
+      <div className="draw-page-stage">
+        <GiveawayPool channel={channel} label={label}/>
+      </div>
+    </main>
+  )
+}
+
+function RepairDrawPage() { return <AdminDrawPage channel="repair" label="Repair Lucky Draw"/> }
+function SoochiDrawPage() { return <AdminDrawPage channel="food"   label="Soochi Lucky Draw"/> }
+
 function AdminInner({ user }) {
   const [tab, setTab] = useState('roster')
 
   const titles = {
     roster:   { title: 'Manage the roster.', sub: 'Add, edit, or remove crew on the public /team page.' },
     users:    { title: 'Manage users.',      sub: 'Create new admins or crew. Change roles, block, or remove access.' },
+    giveaway: { title: "Benny's launch giveaway.", sub: "Repair and food ticket pools, plus the live spin-wheel draw — 1 car each. The other 8 of the 10 launch-day cars come from separate activities, not tracked here." },
     settings: { title: 'Settings.',          sub: 'Integrations and secrets. Admin-only — never visible to public visitors.' },
   }
   const t = titles[tab] || titles.roster
@@ -2474,21 +2924,24 @@ function AdminInner({ user }) {
       <PageHeader kicker="Admin" title={t.title}>{t.sub}</PageHeader>
 
       <section className="section">
-        <div className="staff-bar">
-          <div className="staff-user"><span className="dot dot--ok"/> Admin: <b>{user.email}</b></div>
-          <div className="staff-actions">
-            <Link to="/staff" className="btn btn--ghost btn--sm">← Staff</Link>
-          </div>
+        <StaffToolbar user={user}/>
+
+        <div className="admin-quick-actions">
+          <span className="admin-quick-actions-label">Lucky draw, for stream:</span>
+          <Link to="/repair-draw" target="_blank" rel="noreferrer" className="btn btn--primary btn--sm">Repair Lucky Draw ↗</Link>
+          <Link to="/soochi-draw" target="_blank" rel="noreferrer" className="btn btn--primary btn--sm">Soochi Lucky Draw ↗</Link>
         </div>
 
         <div className="tabs tabs--main">
           <button className={`tab ${tab === 'roster'   ? 'is-on' : ''}`} onClick={() => setTab('roster')}>Roster</button>
           <button className={`tab ${tab === 'users'    ? 'is-on' : ''}`} onClick={() => setTab('users')}>Users</button>
+          <button className={`tab ${tab === 'giveaway' ? 'is-on' : ''}`} onClick={() => setTab('giveaway')}>Giveaway</button>
           <button className={`tab ${tab === 'settings' ? 'is-on' : ''}`} onClick={() => setTab('settings')}>Settings</button>
         </div>
 
         {tab === 'roster'   && <AdminRoster/>}
         {tab === 'users'    && <AdminUsers currentUser={user}/>}
+        {tab === 'giveaway' && <AdminGiveaway/>}
         {tab === 'settings' && <AdminSettings/>}
       </section>
     </main>
@@ -2548,9 +3001,51 @@ function AdminSettings() {
     }
   }
 
-  if (!loaded) return <div className="loading">Loading…</div>
+  const [sheetsUrl, setSheetsUrl] = useState('')
+  const [sheetsConfigured, setSheetsConfigured] = useState(false)
+  const [sheetsLoaded, setSheetsLoaded] = useState(false)
+  const [sheetsStatus, setSheetsStatus] = useState({ state: 'idle', msg: '' })
+
+  const refreshSheets = async () => {
+    try {
+      const snap = await getDoc(doc(db, 'pitstop_secrets', 'sheets'))
+      setSheetsConfigured(!!(snap.exists() && snap.data()?.url))
+      setSheetsLoaded(true)
+    } catch (err) {
+      console.error(err); setSheetsLoaded(true)
+    }
+  }
+  useEffect(() => { refreshSheets() }, [])
+
+  const saveSheets = async e => {
+    e.preventDefault()
+    if (!sheetsUrl.trim()) { setSheetsStatus({ state: 'err', msg: 'Paste the Apps Script web app URL first.' }); return }
+    setSheetsStatus({ state: 'sending', msg: '' })
+    try {
+      await setDoc(doc(db, 'pitstop_secrets', 'sheets'), { url: sheetsUrl.trim(), updatedAt: serverTimestamp() })
+      setSheetsUrl('')
+      setSheetsStatus({ state: 'ok', msg: 'Saved. Tickets issued from /bennys and /soochi now back up to your sheet as they happen.' })
+      await refreshSheets()
+    } catch (err) {
+      setSheetsStatus({ state: 'err', msg: 'Save failed: ' + (err.message || err.code) })
+    }
+  }
+
+  const clearSheets = async () => {
+    if (!confirm('Stop backing up to Google Sheets?')) return
+    try {
+      await setDoc(doc(db, 'pitstop_secrets', 'sheets'), { url: '', updatedAt: serverTimestamp() })
+      setSheetsStatus({ state: 'ok', msg: 'Backup disabled.' })
+      await refreshSheets()
+    } catch (err) {
+      setSheetsStatus({ state: 'err', msg: 'Could not remove: ' + (err.message || err.code) })
+    }
+  }
+
+  if (!loaded || !sheetsLoaded) return <div className="loading">Loading…</div>
 
   return (
+    <>
     <form className="admin-add" onSubmit={save}>
       <div className="form-h">vgy.me image hosting</div>
       <p className="t2" style={{margin: '0 0 1rem', fontSize: '.9rem'}}>
@@ -2594,6 +3089,45 @@ function AdminSettings() {
         {status.state === 'err' && <span className="form-err">{status.msg}</span>}
       </div>
     </form>
+
+    <form className="admin-add" onSubmit={saveSheets}>
+      <div className="form-h">Google Sheets backup</div>
+      <p className="t2" style={{margin: '0 0 1rem', fontSize: '.9rem'}}>
+        Every ticket issued from /bennys or /soochi gets posted to a Google Sheet as a live backup,
+        independent of Firestore — confirmed winners aren&apos;t included (that stays the admin draw
+        tool's job; use the CSV export on the Giveaway tab for those). Needs a small Google Apps Script
+        deployed on your own sheet first — ask Claude for the script and the deploy steps — then paste
+        the resulting Web App URL below. Keep the sheet itself shared with admins only.
+      </p>
+
+      <div className={`secret-status ${sheetsConfigured ? 'secret-status--ok' : 'secret-status--off'}`}>
+        <span className="secret-dot"/>
+        {sheetsConfigured ? 'Backup configured' : 'Not configured'}
+      </div>
+
+      <label className="field">
+        <span>{sheetsConfigured ? 'Replace Web App URL' : 'Apps Script Web App URL'}</span>
+        <input
+          type="url"
+          className="image-field-url"
+          value={sheetsUrl}
+          onChange={e => setSheetsUrl(e.target.value)}
+          placeholder={sheetsConfigured ? 'https://script.google.com/macros/s/…/exec (leave blank to keep current)' : 'https://script.google.com/macros/s/…/exec'}
+          autoComplete="off"
+          spellCheck={false}
+        />
+      </label>
+
+      <div className="form-foot">
+        <button type="submit" className="btn btn--primary" disabled={sheetsStatus.state === 'sending' || !sheetsUrl.trim()}>
+          {sheetsStatus.state === 'sending' ? 'Saving…' : (sheetsConfigured ? 'Replace URL' : 'Save URL')}
+        </button>
+        {sheetsConfigured && <button type="button" className="btn btn--del btn--sm" onClick={clearSheets}>Disable backup</button>}
+        {sheetsStatus.state === 'ok'  && <span className="form-ok">{sheetsStatus.msg}</span>}
+        {sheetsStatus.state === 'err' && <span className="form-err">{sheetsStatus.msg}</span>}
+      </div>
+    </form>
+    </>
   )
 }
 
@@ -2687,6 +3221,226 @@ function AdminRoster() {
   )
 }
 
+/* ─── Admin · Giveaway panel (pools + spin-wheel draw) ─────── */
+
+function GiveawayPool({ channel, label, streamLink }) {
+  const [tickets, setTickets]     = useState([])
+  const [spinning, setSpinning]   = useState(false)
+  const [display, setDisplay]     = useState(null)
+  const [pendingWinner, setPendingWinner] = useState(null)
+  const [busy, setBusy]           = useState(false)
+  const [celebrate, setCelebrate] = useState(false)
+  const timerRef = useRef(null)
+
+  useEffect(() => {
+    const unsub = onSnapshot(
+      query(collection(db, 'bennys_tokens'), where('channel', '==', channel)),
+      snap => {
+        const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+        docs.sort((a, b) => (b.createdAt?.seconds ?? 0) - (a.createdAt?.seconds ?? 0))
+        setTickets(docs)
+      },
+      err => console.error('[admin giveaway] read failed:', err)
+    )
+    return () => { unsub(); clearTimeout(timerRef.current) }
+  }, [channel])
+
+  const winners   = useMemo(() => tickets.filter(t => t.won).sort((a, b) => (b.wonAt?.seconds ?? 0) - (a.wonAt?.seconds ?? 0)), [tickets])
+  const wonNames  = useMemo(() => new Set(winners.map(w => w.name)), [winners])
+  const eligible  = useMemo(() => tickets.filter(t => !t.won && !wonNames.has(t.name)), [tickets, wonNames])
+  const cap       = CARS_PER_CHANNEL[channel]
+  const slotsLeft = cap - winners.length
+
+  const spin = () => {
+    if (spinning || eligible.length === 0 || slotsLeft <= 0) return
+    setPendingWinner(null)
+    setSpinning(true)
+    setCelebrate(false)
+    const idx = crypto.getRandomValues(new Uint32Array(1))[0] % eligible.length
+    const winner = eligible[idx]
+
+    let delay = 60
+    let ticks = 0
+    const maxTicks = 26
+    const tick = () => {
+      setDisplay(eligible[Math.floor(Math.random() * eligible.length)])
+      ticks++
+      if (ticks >= maxTicks) {
+        setDisplay(winner)
+        setSpinning(false)
+        setPendingWinner(winner)
+        setCelebrate(true)
+        return
+      }
+      delay *= 1.16
+      timerRef.current = setTimeout(tick, delay)
+    }
+    tick()
+  }
+
+  const confirmWinner = async () => {
+    if (!pendingWinner) return
+    setBusy(true)
+    try {
+      await updateDoc(doc(db, 'bennys_tokens', pendingWinner.id), {
+        won: true,
+        wonPrize: `${label} — Car #${winners.length + 1}`,
+        wonAt: serverTimestamp(),
+      })
+      setPendingWinner(null); setDisplay(null); setCelebrate(false)
+    } catch (err) {
+      alert('Could not confirm winner: ' + (err.message || err.code))
+    } finally { setBusy(false) }
+  }
+
+  const reSpin = () => spin()
+
+  const undoLast = async () => {
+    const last = winners[0]
+    if (!last) return
+    if (!confirm(`Undo ${last.name}'s win (${last.wonPrize})? They'll go back in the pool.`)) return
+    setBusy(true)
+    try { await updateDoc(doc(db, 'bennys_tokens', last.id), { won: false, wonPrize: null, wonAt: null }) }
+    catch (err) { alert('Could not undo: ' + (err.message || err.code)) }
+    finally { setBusy(false) }
+  }
+
+  return (
+    <div className="card giveaway-pool">
+      <div className="giveaway-pool-head">
+        <div className="card-title">{label}</div>
+        {streamLink && <Link to={streamLink} className="btn btn--ghost btn--sm" target="_blank" rel="noreferrer">Open for stream ↗</Link>}
+      </div>
+      <div className="giveaway-stats">
+        <span className="status status--accepted">{eligible.length} eligible</span>
+        <span className={`status status--${slotsLeft > 0 ? 'new' : 'done'}`}>{winners.length} / {cap} drawn</span>
+      </div>
+
+      <div className={`draw-stage ${spinning ? 'is-spinning' : ''} ${celebrate ? 'is-celebrating' : ''}`}>
+        <div className="draw-stage-glow" aria-hidden="true"/>
+        {celebrate && (
+          <div className="draw-sparks" aria-hidden="true">
+            {Array.from({ length: 18 }).map((_, i) => (
+              <motion.span key={i} className="draw-spark"
+                initial={{ x: 0, y: 0, opacity: 1, scale: 1 }}
+                animate={{
+                  x: Math.cos((i / 18) * Math.PI * 2) * (60 + (i % 3) * 18),
+                  y: Math.sin((i / 18) * Math.PI * 2) * (60 + (i % 3) * 18) - 10,
+                  opacity: 0, scale: 0,
+                }}
+                transition={{ duration: .9, ease: 'easeOut' }}
+              />
+            ))}
+          </div>
+        )}
+        {display ? (
+          spinning ? (
+            <div className="draw-stage-content draw-stage-content--spin">
+              <div className="draw-stage-name">{display.name}</div>
+              <div className="draw-stage-code">Ticket {display.code}</div>
+            </div>
+          ) : (
+            <motion.div className="draw-stage-content"
+              initial={{ scale: 1.35, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              transition={{ type: 'spring', stiffness: 300, damping: 15 }}>
+              <div className="draw-stage-name">{display.name}</div>
+              <div className="draw-stage-code">Ticket {display.code}</div>
+            </motion.div>
+          )
+        ) : (
+          <div className="draw-stage-empty">Spin to draw a winner</div>
+        )}
+      </div>
+
+      <div className="form-foot">
+        {!pendingWinner ? (
+          <button className="btn btn--primary btn--lg" onClick={spin} disabled={spinning || eligible.length === 0 || slotsLeft <= 0}>
+            {slotsLeft <= 0 ? 'All cars assigned' : spinning ? 'Spinning…' : `Spin for Car #${winners.length + 1}`}
+          </button>
+        ) : (
+          <>
+            <button className="btn btn--primary btn--lg" onClick={confirmWinner} disabled={busy}>Confirm {pendingWinner.name} →</button>
+            <button className="btn btn--ghost btn--lg" onClick={reSpin} disabled={busy || spinning}>Re-spin</button>
+          </>
+        )}
+        {winners.length > 0 && !pendingWinner && (
+          <button className="btn btn--ghost btn--sm" onClick={undoLast} disabled={busy}>Undo last win</button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function AdminGiveaway() {
+  const [allTickets, setAllTickets] = useState([])
+
+  useEffect(() => {
+    const unsub = onSnapshot(
+      collection(db, 'bennys_tokens'),
+      snap => setAllTickets(snap.docs.map(d => ({ id: d.id, ...d.data() }))),
+      err => console.error('[admin giveaway] read failed:', err)
+    )
+    return unsub
+  }, [])
+
+  const winners = useMemo(() =>
+    allTickets.filter(t => t.won).sort((a, b) => (b.wonAt?.seconds ?? 0) - (a.wonAt?.seconds ?? 0)),
+    [allTickets])
+  const totalCars = CARS_PER_CHANNEL.repair + CARS_PER_CHANNEL.food
+
+  const copyWinners = () => {
+    const text = winners.map(w => `${w.wonPrize} — ${w.name} (ticket ${w.code}, ${w.channel === 'repair' ? 'Repair Lucky Draw' : 'Soochi Lucky Draw'})`).join('\n')
+    navigator.clipboard?.writeText(text || 'No winners yet.')
+  }
+
+  // Manual backup snapshot — exports every ticket (not just winners) to a CSV
+  // any spreadsheet app opens. There's no live/auto-sync to an external sheet
+  // (that needs OAuth + a Sheets API setup this app doesn't have); re-click
+  // this anytime during the event — e.g. after every confirmed winner — and
+  // you've got an offline copy independent of Firestore.
+  const exportCSV = () => {
+    const headers = ['code', 'channel', 'name', 'note', 'issuedByLabel', 'createdAt', 'won', 'wonPrize']
+    const rows = allTickets
+      .slice()
+      .sort((a, b) => (a.createdAt?.seconds ?? 0) - (b.createdAt?.seconds ?? 0))
+      .map(t => ({
+        code: t.code, channel: t.channel, name: t.name, note: t.note || '',
+        issuedByLabel: t.issuedByLabel || '',
+        createdAt: t.createdAt?.toDate ? t.createdAt.toDate().toLocaleString() : '',
+        won: t.won ? 'yes' : 'no', wonPrize: t.wonPrize || '',
+      }))
+    downloadCSV(`bennys-giveaway-${todayISO()}.csv`, toCSV(rows, headers))
+  }
+
+  return (
+    <>
+      <div className="giveaway-grid">
+        <GiveawayPool channel="repair" label="Repair Lucky Draw" streamLink="/repair-draw"/>
+        <GiveawayPool channel="food"   label="Soochi Lucky Draw" streamLink="/soochi-draw"/>
+      </div>
+
+      <div className="log-list-h">All winners · {winners.length} / {totalCars}</div>
+      <div className="form-foot" style={{marginBottom: '1rem'}}>
+        <button className="btn btn--ghost btn--sm" onClick={copyWinners} disabled={winners.length === 0}>Copy winners list</button>
+        <button className="btn btn--ghost btn--sm" onClick={exportCSV} disabled={allTickets.length === 0}>Export all tickets (CSV backup)</button>
+      </div>
+      <div className="reqs">
+        {winners.length === 0 && <div className="empty">No winners drawn yet.</div>}
+        {winners.map(w => (
+          <div key={w.id} className="req">
+            <div className="req-head">
+              <div className="req-name">{w.name}</div>
+              <span className="status status--done">{w.wonPrize}</span>
+            </div>
+            <div className="req-vehicle">Ticket {w.code} · {w.channel === 'repair' ? 'Repair Lucky Draw' : 'Soochi Lucky Draw'}</div>
+          </div>
+        ))}
+      </div>
+    </>
+  )
+}
+
 /* ─── Admin · Users panel ──────────────────────────────────── */
 
 function AdminUsers({ currentUser }) {
@@ -2770,6 +3524,8 @@ function AdminUsers({ currentUser }) {
           <label className="field"><span>Role</span>
             <select value={draft.role} onChange={e => setDraft({...draft, role: e.target.value})}>
               <option value="crew">Crew — staff dashboard, logs, reviews</option>
+              <option value="bennys">Benny's — giveaway repair-token issuer only</option>
+              <option value="soochi">Soochi — giveaway food-token issuer only</option>
               <option value="admin">Admin — everything (including this page)</option>
             </select>
           </label>
@@ -2803,6 +3559,8 @@ function AdminUsers({ currentUser }) {
             <div className="req-foot">
               <select value={u.role || 'crew'} onChange={e => setRole(u.uid, e.target.value)} disabled={u.uid === currentUser.uid}>
                 <option value="crew">Crew</option>
+                <option value="bennys">Benny's</option>
+                <option value="soochi">Soochi</option>
                 <option value="admin">Admin</option>
                 <option value="blocked">Blocked</option>
               </select>
@@ -2816,6 +3574,20 @@ function AdminUsers({ currentUser }) {
 }
 
 /* ─── Shared bits ──────────────────────────────────────────── */
+
+// Per-page identity confirmation + sign out. Cross-tool jumps (Bennys, Soochi,
+// Admin, …) now live in the main Nav itself, which grows based on who's
+// signed in — this stays focused on "who's on this device right now."
+function StaffToolbar({ user }) {
+  return (
+    <div className="staff-bar">
+      <div className="staff-user"><span className="dot dot--ok"/> <b>{user.email}</b></div>
+      <div className="staff-actions">
+        <button className="btn btn--ghost btn--sm" onClick={() => signOut(auth)}>Sign out</button>
+      </div>
+    </div>
+  )
+}
 
 function PageHeader({ kicker, title, children }) {
   return (
@@ -2841,11 +3613,11 @@ function ScrollToTop() {
 
 export default function App() {
   const loc = useLocation()
+  const isDrawPage = loc.pathname === '/repair-draw' || loc.pathname === '/soochi-draw'
   return (
     <Fragment>
-      <ScrollProgressBar/>
       <ScrollToTop/>
-      <Nav/>
+      {!isDrawPage && <Nav/>}
       <AnimatePresence mode="wait">
         <PageTransition key={loc.pathname}>
           <Routes location={loc}>
@@ -2858,12 +3630,16 @@ export default function App() {
             <Route path="/gallery"   element={<GalleryPage/>}/>
             <Route path="/pitch"     element={<PitchPage/>}/>
             <Route path="/staff"     element={<StaffPage/>}/>
+            <Route path="/bennys"    element={<BennysPage/>}/>
+            <Route path="/soochi"    element={<SoochiPage/>}/>
             <Route path="/admin"     element={<AdminPage/>}/>
+            <Route path="/repair-draw" element={<RepairDrawPage/>}/>
+            <Route path="/soochi-draw" element={<SoochiDrawPage/>}/>
             <Route path="*"          element={<NotFound/>}/>
           </Routes>
         </PageTransition>
       </AnimatePresence>
-      <Footer/>
+      {!isDrawPage && <Footer/>}
     </Fragment>
   )
 }

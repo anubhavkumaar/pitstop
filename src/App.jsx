@@ -94,7 +94,7 @@ const FAQ = [
   { q: 'Where are you located?',
     a: "Benny's Original Motor Works, our real shop, opening July 1st. We still collect from anywhere in Los Santos and drop into any public garage you want, too." },
   { q: 'What does the service fee cover?',
-    a: "Pickup, all the work agreed on, full clean, and drop-off to the garage of your choice. The flat rate is being finalized for Benny's opening, announcing soon. Parts costs are passed through at cost on top." },
+    a: "Pickup, all the work agreed on, full clean, and drop-off to the garage of your choice. The fee is being finalized for Benny's opening, prices announcing soon. Parts costs are passed through at cost on top." },
 ]
 
 /* ─── Helpers ──────────────────────────────────────────────── */
@@ -714,7 +714,7 @@ function HomePage() {
         <motion.p className="hero-sub"
           initial={{opacity:0, y:12}} animate={{opacity:1, y:0}} transition={{duration:.7, delay:.55}}>
           Pit Stop's first real shop, opening July 1st. Full repair, custom builds, performance upgrades,
-          detailing — walk in, or we'll still come to you. Flat fee, pricing announcing soon.
+          detailing — walk in, or we'll still come to you. Fee, prices announcing soon.
         </motion.p>
         <motion.div className="hero-cta"
           initial={{opacity:0, y:8}} animate={{opacity:1, y:0}} transition={{duration:.5, delay:.7}}>
@@ -784,12 +784,12 @@ function HomePage() {
         </motion.div>
 
         <div className="price-board">
-          <div className="price-row"><span>Service fee (flat, any scope)</span><b>TBA</b></div>
+          <div className="price-row"><span>Service fee (any scope)</span><b>TBA</b></div>
           <div className="price-row"><span>Repair, builds & upgrades (parts)</span><b>At cost</b></div>
           <div className="price-row"><span>Pickup &amp; drop-off</span><b>Included</b></div>
           <div className="price-row price-row--total">
             <span>What you pay</span>
-            <b className="t2">Pricing is being finalized for Benny's opening — announcing soon. Parts are always passed through at cost.</b>
+            <b className="t2">Prices are being finalized for Benny's opening — announcing soon. Parts are always passed through at cost.</b>
           </div>
         </div>
       </section>
@@ -871,8 +871,8 @@ function ServicesPage() {
   return (
     <main className="page">
       <PageHeader kicker="Services" title="Everything we do, on the board.">
-        Repair, custom builds, performance upgrades, or just a wash — pick what you need. It&apos;s a flat
-        service fee either way — pickup, work, clean, and drop-off included — pricing announcing soon
+        Repair, custom builds, performance upgrades, or just a wash — pick what you need. It&apos;s one
+        service fee either way — pickup, work, clean, and drop-off included — prices announcing soon
         for Benny's opening. Parts are passed through at cost.
       </PageHeader>
 
@@ -888,7 +888,7 @@ function ServicesPage() {
             <li><b>Pickup.</b> A crew member rolls out and collects the vehicle.</li>
             <li><b>Work.</b> Repair, builds, upgrades, cleaning — whichever scope you asked for.</li>
             <li><b>Drop.</b> Parked in whichever public garage you choose.</li>
-            <li><b>Bill.</b> Flat service fee (TBA) + parts at cost. Paid on delivery.</li>
+            <li><b>Bill.</b> Service fee (TBA) + parts at cost. Paid on delivery.</li>
           </ol>
         </div>
       </section>
@@ -2090,8 +2090,8 @@ function PitchPage() {
             That team handles pickup, supervises the actual repair or build, cleans the car,
             and parks it in the customer&apos;s garage of choice.
           </PitchBlock>
-          <PitchBlock n="03" t="A flat, transparent fee.">
-            One service fee, flat, regardless of scope (the exact rate is being finalized for
+          <PitchBlock n="03" t="A transparent fee.">
+            One service fee, regardless of scope (the exact rate is being finalized for
             Benny's opening). Parts are passed through at cost — no markup, no
             surprises. The customer sees exactly what they&apos;re paying for.
           </PitchBlock>

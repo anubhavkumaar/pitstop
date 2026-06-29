@@ -691,7 +691,7 @@ function HomePage() {
             hidden: { opacity: 1 },
             visible: { opacity: 1, transition: { staggerChildren: 0.12, delayChildren: 0.1 } },
           }}>
-          {['Paleto’s far.', 'Harmony’s farther.'].map((line, i) => (
+          {['Harmony’s far.', 'Paleto’s farther.'].map((line, i) => (
             <motion.span key={i} className="hero-line hero-line--setup"
               variants={{
                 hidden:  { opacity: 0, y: 28, filter: 'blur(8px)' },

@@ -1648,6 +1648,13 @@ select:focus { outline: none; border-color: var(--brand); }
 .ticket-table tbody td { border-bottom: 1px solid var(--border); color: var(--t1); }
 .ticket-table tbody td.empty { text-align: center; white-space: normal; }
 .ticket-table-code { font-family: var(--mono); color: var(--brand); letter-spacing: .05em; }
+.ticket-table-input {
+  width: 100%; min-width: 110px;
+  background: var(--carbon); border: 1px solid var(--brand);
+  border-radius: 6px; padding: .3rem .5rem;
+  color: var(--t1); font-size: .85rem;
+}
+.ticket-table-actions { display: flex; gap: .35rem; white-space: nowrap; }
 
 .giveaway-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 1.2rem; margin-bottom: 2rem; }
 .giveaway-pool { gap: .2rem; }

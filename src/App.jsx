@@ -41,6 +41,10 @@ const isStaff = (user, role) => !!user && role !== 'blocked' && (isBootstrapOwne
 // never see.
 const canRepairTokens = (user, role) => isAdmin(user, role) || role === 'crew' || role === 'bennys'
 const canFoodTokens   = (user, role) => isAdmin(user, role) || role === 'soochi'
+// Editing/deleting raw ticket entries (not just draw results) is deliberately
+// narrower than isAdmin() — management only, per request, even though plain
+// admins can do everything else in the giveaway tooling.
+const canManageEntries = (user, role) => isBootstrapOwner(user) || role === 'management'
 
 // Giveaway car allocation — 1 car drawn per ticket channel. The other 8 of
 // the 10 launch-day cars come from separate, non-ticket activities run live
@@ -160,6 +164,7 @@ async function issueGiveawayToken({ channel, name, note, issuer }) {
     // /soochi issuance flow — see AdminSettings for the "only writer" intent).
     // No-op until an admin configures pitstop_secrets/sheets.
     postToSheets({ type: 'ticket', code, channel, name: name.trim(), note: (note || '').trim(), issuedByLabel })
+    logAudit({ action: 'created', code, channel, name: name.trim(), actor: issuer })
     return code
   }
   throw new Error('Could not generate a unique code — try again.')
@@ -175,6 +180,24 @@ async function postToSheets(payload) {
     await fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(payload) })
   } catch (err) {
     console.error('[sheets backup] failed:', err)
+  }
+}
+
+// Management-only audit trail — every giveaway entry created, edited, or
+// removed, who did it, and when. Write-only for whoever performed the
+// action; the log itself is immutable (see firestore.rules).
+async function logAudit({ action, code, channel, name, before, after, actor }) {
+  try {
+    await addDoc(collection(db, 'bennys_audit_log'), {
+      action, code, channel, name,
+      before: before || null,
+      after:  after  || null,
+      performedByUid:   actor?.uid   || null,
+      performedByLabel: actor?.email || 'unknown',
+      createdAt: serverTimestamp(),
+    })
+  } catch (err) {
+    console.error('[audit log] failed:', err)
   }
 }
 
@@ -2653,7 +2676,7 @@ function GiveawayIssuePage({ channel, canIssue, kicker, deniedLabel, title, sub,
 
   return (
     <TokenIssuer
-      user={user} channel={channel} kicker={kicker} title={title} sub={sub}
+      user={user} role={role} channel={channel} kicker={kicker} title={title} sub={sub}
       nameLabel={nameLabel} namePlaceholder={namePlaceholder}
       showNote={showNote} noteLabel={noteLabel} notePlaceholder={notePlaceholder}
       showQuantity={showQuantity}
@@ -2661,7 +2684,40 @@ function GiveawayIssuePage({ channel, canIssue, kicker, deniedLabel, title, sub,
   )
 }
 
-function TicketTable({ tickets, showNote, noteLabel }) {
+function TicketTable({ tickets, showNote, noteLabel, user, role }) {
+  const [editingId, setEditingId] = useState(null)
+  const [draft, setDraft] = useState({ name: '', note: '' })
+  const [busyId, setBusyId] = useState(null)
+  const canManage = canManageEntries(user, role)
+  const cols = showNote ? 5 : 4
+
+  const startEdit = t => { setEditingId(t.id); setDraft({ name: t.name || '', note: t.note || '' }) }
+  const cancelEdit = () => setEditingId(null)
+
+  const saveEdit = async t => {
+    if (!draft.name.trim()) return
+    setBusyId(t.id)
+    try {
+      const after = { name: draft.name.trim(), note: draft.note.trim() }
+      await updateDoc(doc(db, 'bennys_tokens', t.id), after)
+      logAudit({ action: 'edited', code: t.code, channel: t.channel, name: after.name, before: { name: t.name, note: t.note || '' }, after, actor: user })
+      setEditingId(null)
+    } catch (err) {
+      alert('Could not save: ' + (err.message || err.code))
+    } finally { setBusyId(null) }
+  }
+
+  const deleteTicket = async t => {
+    if (!confirm(`Delete ticket ${t.code} (${t.name})? This removes it from the pool entirely.`)) return
+    setBusyId(t.id)
+    try {
+      await deleteDoc(doc(db, 'bennys_tokens', t.id))
+      logAudit({ action: 'removed', code: t.code, channel: t.channel, name: t.name, before: { name: t.name, note: t.note || '' }, actor: user })
+    }
+    catch (err) { alert('Could not delete: ' + (err.message || err.code)) }
+    finally { setBusyId(null) }
+  }
+
   return (
     <div className="ticket-table-wrap">
       <table className="ticket-table">
@@ -2672,19 +2728,46 @@ function TicketTable({ tickets, showNote, noteLabel }) {
             <th>Name</th>
             {showNote && <th>{noteLabel || 'Note'}</th>}
             <th>Time</th>
+            {canManage && <th>Manage</th>}
           </tr>
         </thead>
         <tbody>
           {tickets.length === 0 && (
-            <tr><td colSpan={showNote ? 5 : 4} className="empty">No tickets issued yet.</td></tr>
+            <tr><td colSpan={canManage ? cols + 1 : cols} className="empty">No tickets issued yet.</td></tr>
           )}
           {tickets.map((t, i) => (
             <tr key={t.id}>
               <td>{i + 1}</td>
               <td className="ticket-table-code">{t.code}</td>
-              <td>{t.name}</td>
-              {showNote && <td>{t.note || '—'}</td>}
+              {editingId === t.id ? (
+                <>
+                  <td><input className="ticket-table-input" value={draft.name} onChange={e => setDraft({...draft, name: e.target.value})}/></td>
+                  {showNote && <td><input className="ticket-table-input" value={draft.note} onChange={e => setDraft({...draft, note: e.target.value})}/></td>}
+                </>
+              ) : (
+                <>
+                  <td>{t.name}</td>
+                  {showNote && <td>{t.note || '—'}</td>}
+                </>
+              )}
               <td>{t.createdAt?.toDate ? t.createdAt.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}</td>
+              {canManage && (
+                <td className="ticket-table-actions">
+                  {editingId === t.id ? (
+                    <>
+                      <button className="btn btn--ghost btn--sm" onClick={() => saveEdit(t)} disabled={busyId === t.id}>Save</button>
+                      <button className="btn btn--ghost btn--sm" onClick={cancelEdit} disabled={busyId === t.id}>Cancel</button>
+                    </>
+                  ) : (
+                    <>
+                      <button className="btn btn--ghost btn--sm" onClick={() => startEdit(t)} disabled={busyId === t.id}>Edit</button>
+                      <button className="btn btn--del btn--sm" onClick={() => deleteTicket(t)} disabled={busyId === t.id}>
+                        {busyId === t.id ? '…' : 'Delete'}
+                      </button>
+                    </>
+                  )}
+                </td>
+              )}
             </tr>
           ))}
         </tbody>
@@ -2693,7 +2776,7 @@ function TicketTable({ tickets, showNote, noteLabel }) {
   )
 }
 
-function TokenIssuer({ user, channel, kicker, title, sub, nameLabel, namePlaceholder, showNote, noteLabel, notePlaceholder, showQuantity }) {
+function TokenIssuer({ user, role, channel, kicker, title, sub, nameLabel, namePlaceholder, showNote, noteLabel, notePlaceholder, showQuantity }) {
   const [name, setName] = useState('')
   const [note, setNote] = useState('')
   const [quantity, setQuantity] = useState(1)
@@ -2776,7 +2859,7 @@ function TokenIssuer({ user, channel, kicker, title, sub, nameLabel, namePlaceho
         )}
 
         <div className="log-list-h">Today&apos;s tickets · {tickets.length}</div>
-        <TicketTable tickets={tickets} showNote={showNote} noteLabel={noteLabel}/>
+        <TicketTable tickets={tickets} showNote={showNote} noteLabel={noteLabel} user={user} role={role}/>
       </section>
     </main>
   )
@@ -2838,7 +2921,7 @@ function AdminPage() {
     )
   }
 
-  return <AdminInner user={user}/>
+  return <AdminInner user={user} role={role}/>
 }
 
 // Standalone, chrome-free draw page for one channel — meant to be put up
@@ -2908,14 +2991,16 @@ function AdminDrawPage({ channel, label }) {
 function RepairDrawPage() { return <AdminDrawPage channel="repair" label="Repair Lucky Draw"/> }
 function SoochiDrawPage() { return <AdminDrawPage channel="food"   label="Soochi Lucky Draw"/> }
 
-function AdminInner({ user }) {
+function AdminInner({ user, role }) {
   const [tab, setTab] = useState('roster')
+  const showAudit = canManageEntries(user, role)
 
   const titles = {
     roster:   { title: 'Manage the roster.', sub: 'Add, edit, or remove crew on the public /team page.' },
     users:    { title: 'Manage users.',      sub: 'Create new admins or crew. Change roles, block, or remove access.' },
     giveaway: { title: "Benny's launch giveaway.", sub: "Repair and food ticket pools, plus the live spin-wheel draw — 1 car each. The other 8 of the 10 launch-day cars come from separate activities, not tracked here." },
     settings: { title: 'Settings.',          sub: 'Integrations and secrets. Admin-only — never visible to public visitors.' },
+    audit:    { title: 'Audit log.',         sub: 'Every giveaway entry created, edited, or removed — when (IST) and by which account. Management-only.' },
   }
   const t = titles[tab] || titles.roster
 
@@ -2937,12 +3022,14 @@ function AdminInner({ user }) {
           <button className={`tab ${tab === 'users'    ? 'is-on' : ''}`} onClick={() => setTab('users')}>Users</button>
           <button className={`tab ${tab === 'giveaway' ? 'is-on' : ''}`} onClick={() => setTab('giveaway')}>Giveaway</button>
           <button className={`tab ${tab === 'settings' ? 'is-on' : ''}`} onClick={() => setTab('settings')}>Settings</button>
+          {showAudit && <button className={`tab ${tab === 'audit' ? 'is-on' : ''}`} onClick={() => setTab('audit')}>Audit Log</button>}
         </div>
 
         {tab === 'roster'   && <AdminRoster/>}
         {tab === 'users'    && <AdminUsers currentUser={user}/>}
         {tab === 'giveaway' && <AdminGiveaway/>}
         {tab === 'settings' && <AdminSettings/>}
+        {tab === 'audit' && showAudit && <AdminAuditLog/>}
       </section>
     </main>
   )
@@ -3368,6 +3455,57 @@ function GiveawayPool({ channel, label, streamLink }) {
           <button className="btn btn--ghost btn--sm" onClick={undoLast} disabled={busy}>Undo last win</button>
         )}
       </div>
+    </div>
+  )
+}
+
+function AdminAuditLog() {
+  const [logs, setLogs] = useState([])
+
+  useEffect(() => {
+    const unsub = onSnapshot(
+      collection(db, 'bennys_audit_log'),
+      snap => {
+        const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+        docs.sort((a, b) => (b.createdAt?.seconds ?? 0) - (a.createdAt?.seconds ?? 0))
+        setLogs(docs)
+      },
+      err => console.error('[audit log] read failed:', err)
+    )
+    return unsub
+  }, [])
+
+  const fmtIST = ts => ts?.toDate
+    ? ts.toDate().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'medium' }) + ' IST'
+    : '—'
+
+  const actionStatus = a => a === 'created' ? 'accepted' : a === 'removed' ? 'cancelled' : 'new'
+
+  return (
+    <div className="ticket-table-wrap">
+      <table className="ticket-table">
+        <thead>
+          <tr>
+            <th>When (IST)</th>
+            <th>Action</th>
+            <th>Ticket</th>
+            <th>Name</th>
+            <th>By</th>
+          </tr>
+        </thead>
+        <tbody>
+          {logs.length === 0 && <tr><td colSpan={5} className="empty">No activity logged yet.</td></tr>}
+          {logs.map(l => (
+            <tr key={l.id}>
+              <td>{fmtIST(l.createdAt)}</td>
+              <td><span className={`status status--${actionStatus(l.action)}`}>{l.action}</span></td>
+              <td className="ticket-table-code">{l.code}</td>
+              <td>{l.name}</td>
+              <td>{l.performedByLabel}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
     </div>
   )
 }

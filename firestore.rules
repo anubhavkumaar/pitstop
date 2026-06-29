@@ -40,6 +40,12 @@ service cloud.firestore {
         || (signedIn() && userRole() in ['admin', 'management', 'crew']);
     }
 
+    // Narrower than isAdmin() on purpose — editing/deleting a giveaway entry
+    // outright (not just flipping a draw result) is management-only.
+    function isManagementOnly() {
+      return isBootstrapOwner() || (signedIn() && userRole() == 'management');
+    }
+
     // Managed user accounts. Anyone can read their *own* doc; admins can read everyone.
     // Only admins can create / change roles / delete user docs.
     match /pitstop_users/{userId} {
@@ -116,7 +122,22 @@ service cloud.firestore {
         || (userRole() == 'soochi' && request.resource.data.channel == 'food')
       );
 
-      allow update, delete: if isAdmin();
+      // Draw-tool result flips (won / wonPrize / wonAt only) stay open to any
+      // admin or management account; editing the entry itself (name, note —
+      // anything else) is management-only.
+      allow update: if isAdmin()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['won', 'wonPrize', 'wonAt']);
+      allow update: if isManagementOnly();
+      allow delete: if isManagementOnly();
+    }
+
+    // Audit trail for giveaway entries (created / edited / removed). Written
+    // by whoever performs the action; only management can ever read it back.
+    // Immutable — no update or delete, by anyone, ever.
+    match /bennys_audit_log/{doc} {
+      allow create: if isStaff();
+      allow read:   if isManagementOnly();
+      allow update, delete: if false;
     }
 
     // Default deny — anything not matched above is rejected.

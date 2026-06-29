@@ -46,11 +46,13 @@ service cloud.firestore {
       return isBootstrapOwner() || (signedIn() && userRole() == 'management');
     }
 
-    // Managed user accounts. Anyone can read their *own* doc; admins can read everyone.
-    // Only admins can create / change roles / delete user docs.
+    // Managed user accounts. Anyone can read their *own* doc; only management
+    // can read the full roster or create / change roles / delete accounts —
+    // narrower than isAdmin() on purpose, so a plain admin can't grant itself
+    // (or anyone else) more access.
     match /pitstop_users/{userId} {
-      allow read:   if signedIn() && (request.auth.uid == userId || isAdmin());
-      allow create, update, delete: if isAdmin();
+      allow read:   if signedIn() && (request.auth.uid == userId || isManagementOnly());
+      allow create, update, delete: if isManagementOnly();
     }
 
     // Secrets / API tokens (e.g. vgy.me userkey for uploads).

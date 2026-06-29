@@ -2993,11 +2993,11 @@ function SoochiDrawPage() { return <AdminDrawPage channel="food"   label="Soochi
 
 function AdminInner({ user, role }) {
   const [tab, setTab] = useState('roster')
-  const showAudit = canManageEntries(user, role)
+  const isManagement = canManageEntries(user, role)
 
   const titles = {
     roster:   { title: 'Manage the roster.', sub: 'Add, edit, or remove crew on the public /team page.' },
-    users:    { title: 'Manage users.',      sub: 'Create new admins or crew. Change roles, block, or remove access.' },
+    users:    { title: 'Manage users.',      sub: 'Create accounts, change roles, block, or remove access. Management-only.' },
     giveaway: { title: "Benny's launch giveaway.", sub: "Repair and food ticket pools, plus the live spin-wheel draw — 1 car each. The other 8 of the 10 launch-day cars come from separate activities, not tracked here." },
     settings: { title: 'Settings.',          sub: 'Integrations and secrets. Admin-only — never visible to public visitors.' },
     audit:    { title: 'Audit log.',         sub: 'Every giveaway entry created, edited, or removed — when (IST) and by which account. Management-only.' },
@@ -3019,17 +3019,17 @@ function AdminInner({ user, role }) {
 
         <div className="tabs tabs--main">
           <button className={`tab ${tab === 'roster'   ? 'is-on' : ''}`} onClick={() => setTab('roster')}>Roster</button>
-          <button className={`tab ${tab === 'users'    ? 'is-on' : ''}`} onClick={() => setTab('users')}>Users</button>
+          {isManagement && <button className={`tab ${tab === 'users' ? 'is-on' : ''}`} onClick={() => setTab('users')}>Users</button>}
           <button className={`tab ${tab === 'giveaway' ? 'is-on' : ''}`} onClick={() => setTab('giveaway')}>Giveaway</button>
           <button className={`tab ${tab === 'settings' ? 'is-on' : ''}`} onClick={() => setTab('settings')}>Settings</button>
-          {showAudit && <button className={`tab ${tab === 'audit' ? 'is-on' : ''}`} onClick={() => setTab('audit')}>Audit Log</button>}
+          {isManagement && <button className={`tab ${tab === 'audit' ? 'is-on' : ''}`} onClick={() => setTab('audit')}>Audit Log</button>}
         </div>
 
         {tab === 'roster'   && <AdminRoster/>}
-        {tab === 'users'    && <AdminUsers currentUser={user}/>}
+        {tab === 'users'    && isManagement && <AdminUsers currentUser={user}/>}
         {tab === 'giveaway' && <AdminGiveaway/>}
         {tab === 'settings' && <AdminSettings/>}
-        {tab === 'audit' && showAudit && <AdminAuditLog/>}
+        {tab === 'audit' && isManagement && <AdminAuditLog/>}
       </section>
     </main>
   )

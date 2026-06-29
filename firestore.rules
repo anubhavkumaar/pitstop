@@ -32,12 +32,12 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return isBootstrapOwner() || (signedIn() && userRole() == 'admin');
+      return isBootstrapOwner() || (signedIn() && userRole() in ['admin', 'management']);
     }
 
     function isStaff() {
       return isBootstrapOwner()
-        || (signedIn() && (userRole() == 'admin' || userRole() == 'crew'));
+        || (signedIn() && userRole() in ['admin', 'management', 'crew']);
     }
 
     // Managed user accounts. Anyone can read their *own* doc; admins can read everyone.

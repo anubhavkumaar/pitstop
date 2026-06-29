@@ -31,9 +31,9 @@ const OWNER_UIDS = [
 ]
 const isBootstrapOwner = user => !!user && OWNER_UIDS.includes(user.uid)
 // Admin = bootstrap owner OR Firestore role='admin'
-const isAdmin = (user, role) => isBootstrapOwner(user) || role === 'admin'
+const isAdmin = (user, role) => isBootstrapOwner(user) || role === 'admin' || role === 'management'
 // Staff = anyone signed in with a non-blocked role (or the bootstrap owner)
-const isStaff = (user, role) => !!user && role !== 'blocked' && (isBootstrapOwner(user) || role === 'admin' || role === 'crew')
+const isStaff = (user, role) => !!user && role !== 'blocked' && (isBootstrapOwner(user) || role === 'admin' || role === 'management' || role === 'crew')
 
 // Benny's launch giveaway — narrow, single-purpose roles. Deliberately NOT
 // folded into isStaff(): that gate covers the full staff dashboard (booking
@@ -3374,6 +3374,7 @@ function GiveawayPool({ channel, label, streamLink }) {
 
 function AdminGiveaway() {
   const [allTickets, setAllTickets] = useState([])
+  const [busyId, setBusyId] = useState(null)
 
   useEffect(() => {
     const unsub = onSnapshot(
@@ -3413,6 +3414,16 @@ function AdminGiveaway() {
     downloadCSV(`bennys-giveaway-${todayISO()}.csv`, toCSV(rows, headers))
   }
 
+  // Deletes any drawn winner, not just the most recent one per channel (that's
+  // GiveawayPool's "Undo last win"). Sends the ticket back into its pool.
+  const deleteWinner = async w => {
+    if (!confirm(`Delete ${w.name}'s win (${w.wonPrize})? They'll go back into the pool.`)) return
+    setBusyId(w.id)
+    try { await updateDoc(doc(db, 'bennys_tokens', w.id), { won: false, wonPrize: null, wonAt: null }) }
+    catch (err) { alert('Could not delete: ' + (err.message || err.code)) }
+    finally { setBusyId(null) }
+  }
+
   return (
     <>
       <div className="giveaway-grid">
@@ -3434,6 +3445,11 @@ function AdminGiveaway() {
               <span className="status status--done">{w.wonPrize}</span>
             </div>
             <div className="req-vehicle">Ticket {w.code} · {w.channel === 'repair' ? 'Repair Lucky Draw' : 'Soochi Lucky Draw'}</div>
+            <div className="req-foot">
+              <button className="btn btn--del btn--sm" onClick={() => deleteWinner(w)} disabled={busyId === w.id}>
+                {busyId === w.id ? 'Deleting…' : 'Delete win'}
+              </button>
+            </div>
           </div>
         ))}
       </div>
@@ -3527,6 +3543,7 @@ function AdminUsers({ currentUser }) {
               <option value="bennys">Benny's — giveaway repair-token issuer only</option>
               <option value="soochi">Soochi — giveaway food-token issuer only</option>
               <option value="admin">Admin — everything (including this page)</option>
+              <option value="management">Management — same as Admin, full access</option>
             </select>
           </label>
         </div>
@@ -3552,7 +3569,7 @@ function AdminUsers({ currentUser }) {
                   {u.uid === currentUser.uid && <> · <span className="t3">(you)</span></>}
                 </div>
               </div>
-              <span className={`status status--${u.role === 'admin' ? 'done' : u.role === 'blocked' ? 'cancelled' : 'accepted'}`}>
+              <span className={`status status--${u.role === 'admin' || u.role === 'management' ? 'done' : u.role === 'blocked' ? 'cancelled' : 'accepted'}`}>
                 {u.role || 'unknown'}
               </span>
             </div>
@@ -3562,6 +3579,7 @@ function AdminUsers({ currentUser }) {
                 <option value="bennys">Benny's</option>
                 <option value="soochi">Soochi</option>
                 <option value="admin">Admin</option>
+                <option value="management">Management</option>
                 <option value="blocked">Blocked</option>
               </select>
               <button className="btn btn--del btn--sm" onClick={() => removeUser(u)} disabled={u.uid === currentUser.uid}>Remove</button>

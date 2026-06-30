@@ -3773,11 +3773,11 @@ function AdminUsers({ currentUser }) {
           <label className="field"><span>Role</span>
             <select value={draft.role} onChange={e => setDraft({...draft, role: e.target.value})}>
               <option value="crew">Crew — staff dashboard, logs, reviews</option>
-              <option value="bennys">Benny's — giveaway repair-token issuer only</option>
+              <option value="bennys">Benny's — issues repair + membership tokens</option>
               <option value="soochi">Soochi — giveaway food-token issuer only</option>
               <option value="membership">Membership — giveaway membership-token issuer only</option>
-              <option value="admin">Admin — everything (including this page)</option>
-              <option value="management">Management — same as Admin, full access</option>
+              <option value="admin">Admin — full site + giveaway (not user management)</option>
+              <option value="management">Management — everything, incl. users &amp; passwords</option>
             </select>
           </label>
         </div>

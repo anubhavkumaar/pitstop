@@ -65,7 +65,7 @@ service cloud.firestore {
     // readable by whichever roles actually issue giveaway tickets (they're
     // the only ones who trigger a write to it) — write stays admin-only.
     match /pitstop_secrets/sheets {
-      allow read: if signedIn() && userRole() in ['crew', 'bennys', 'soochi'];
+      allow read: if signedIn() && userRole() in ['crew', 'bennys', 'soochi', 'membership'];
     }
 
     // Public booking inbox — anyone can submit; only staff can read/update; admin can delete.
@@ -110,18 +110,19 @@ service cloud.firestore {
     }
 
     // Benny's launch giveaway tickets — one doc per ticket (a name buying twice
-    // gets two docs). Two independent channels: 'repair' (Benny's crew) and
-    // 'food' (Soochi, an external partner). Write access is locked per-channel
-    // so neither side can issue tickets into the other's pool; only admins can
-    // ever flip `won` (the live spin-wheel draw tool).
+    // gets two docs). Three independent channels: 'repair' (Benny's crew),
+    // 'food' (Soochi, an external partner), and 'membership' (membership sales).
+    // Write access is locked per-channel so no side can issue tickets into
+    // another's pool; only admins can ever flip `won` (the live spin-wheel draw).
     match /bennys_tokens/{doc} {
       allow read: if isAdmin()
-        || (signedIn() && userRole() in ['crew', 'bennys', 'soochi']);
+        || (signedIn() && userRole() in ['crew', 'bennys', 'soochi', 'membership']);
 
       allow create: if request.resource.data.won == false && (
         isAdmin()
         || ((userRole() == 'crew' || userRole() == 'bennys') && request.resource.data.channel == 'repair')
         || (userRole() == 'soochi' && request.resource.data.channel == 'food')
+        || (userRole() == 'membership' && request.resource.data.channel == 'membership')
       );
 
       // Draw-tool result flips (won / wonPrize / wonAt only) stay open to any

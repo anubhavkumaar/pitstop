@@ -41,15 +41,21 @@ const isStaff = (user, role) => !!user && role !== 'blocked' && (isBootstrapOwne
 // never see.
 const canRepairTokens = (user, role) => isAdmin(user, role) || role === 'crew' || role === 'bennys'
 const canFoodTokens   = (user, role) => isAdmin(user, role) || role === 'soochi'
+const canMemberTokens = (user, role) => isAdmin(user, role) || role === 'membership'
 // Editing/deleting raw ticket entries (not just draw results) is deliberately
 // narrower than isAdmin() — management only, per request, even though plain
 // admins can do everything else in the giveaway tooling.
 const canManageEntries = (user, role) => isBootstrapOwner(user) || role === 'management'
 
-// Giveaway car allocation — 1 car drawn per ticket channel. The other 8 of
+// Giveaway car allocation — 1 car drawn per ticket channel. The other 7 of
 // the 10 launch-day cars come from separate, non-ticket activities run live
 // at the event and aren't tracked by this tool.
-const CARS_PER_CHANNEL = { repair: 1, food: 1 }
+const CARS_PER_CHANNEL = { repair: 1, food: 1, membership: 1 }
+// Per-channel ticket code prefix and the human label used everywhere a draw is
+// named. Keep these three channels in sync with CARS_PER_CHANNEL.
+const CHANNEL_PREFIX     = { repair: 'R', food: 'F', membership: 'M' }
+const CHANNEL_DRAW_LABEL = { repair: 'Repair Lucky Draw', food: 'Soochi Lucky Draw', membership: 'Membership Lucky Draw' }
+const channelDrawLabel = channel => CHANNEL_DRAW_LABEL[channel] || channel
 
 // Contact-form cooldown so one visitor can't spam the inbox.
 const BOOKING_COOLDOWN_MS = 6 * 60 * 60 * 1000   // 6 hours
@@ -149,7 +155,7 @@ function useRoster() {
 async function issueGiveawayToken({ channel, name, note, issuer }) {
   for (let attempt = 0; attempt < 6; attempt++) {
     const n = 1000 + (crypto.getRandomValues(new Uint32Array(1))[0] % 9000)
-    const code = `${channel === 'repair' ? 'R' : 'F'}-${n}`
+    const code = `${CHANNEL_PREFIX[channel] || 'X'}-${n}`
     const dupe = await getDocs(query(collection(db, 'bennys_tokens'), where('code', '==', code)))
     if (!dupe.empty) continue
     const issuedByLabel = issuer?.email || 'unknown'
@@ -511,6 +517,7 @@ function Nav() {
   const roleLinks = (loaded && user) ? [
     canRepairTokens(user, role) && { to: '/bennys', label: "Benny's" },
     canFoodTokens(user, role)   && { to: '/soochi', label: 'Soochi' },
+    canMemberTokens(user, role) && { to: '/membership', label: 'Membership' },
     isAdmin(user, role)         && { to: '/admin',  label: 'Admin' },
   ].filter(Boolean) : []
 
@@ -611,8 +618,8 @@ function BennysAnnounce() {
           <h2 className="bennys-announce-title">A real shop, finally. Benny's is opening.</h2>
           <p className="bennys-announce-sub">
             To celebrate, we're giving away 10 cars on launch day across a full day of activities.
-            Two of them: every paid repair earns a raffle ticket, and so does every meal from our
-            friends at Soochi — both drawn live, day one.
+            Three of them: every paid repair earns a raffle ticket, so does every meal from our
+            friends at Soochi, and so does every membership you pick up — all drawn live, day one.
           </p>
           <Link to="/services" className="btn btn--primary btn--magnetic">Book a repair →</Link>
         </div>
@@ -2214,9 +2221,11 @@ function PortalDashboard({ user, role }) {
     { to: '/gallery',       icon: IconCamera,  title: 'Gallery',    desc: 'Post photos of finished cars for the public site.' },
     canRepairTokens(user, role) && { to: '/bennys', icon: IconWrench, title: "Benny's Tickets", desc: 'Issue a giveaway ticket per paid repair.' },
     canFoodTokens(user, role)   && { to: '/soochi', icon: IconWash,   title: 'Soochi Tickets',   desc: 'Add a giveaway ticket per meal sold.' },
+    canMemberTokens(user, role) && { to: '/membership', icon: IconStar, title: 'Membership Tickets', desc: 'Add a giveaway ticket per membership sold.' },
     isAdmin(user, role) && { to: '/admin', icon: IconUpgrade, title: 'Admin Panel', desc: 'Roster, users, the giveaway, and settings.' },
     isAdmin(user, role) && { to: '/repair-draw', icon: IconGauge, title: 'Repair Lucky Draw', desc: 'Live spin, stream-ready.', external: true },
     isAdmin(user, role) && { to: '/soochi-draw', icon: IconGauge, title: 'Soochi Lucky Draw', desc: 'Live spin, stream-ready.', external: true },
+    isAdmin(user, role) && { to: '/membership-draw', icon: IconGauge, title: 'Membership Lucky Draw', desc: 'Live spin, stream-ready.', external: true },
   ].filter(Boolean)
 
   return (
@@ -2900,6 +2909,24 @@ function SoochiPage() {
   )
 }
 
+function MembershipPage() {
+  return (
+    <GiveawayIssuePage
+      channel="membership"
+      canIssue={canMemberTokens}
+      kicker="Membership"
+      deniedLabel="Membership"
+      title="Issue a giveaway token."
+      sub="One token per membership purchase — any tier counts the same. Enter the buyer's name; the code is their raffle ticket for the launch-day car giveaway."
+      nameLabel="Member name"
+      namePlaceholder="Maria Chen"
+      showNote
+      noteLabel="Membership / tier (optional)"
+      notePlaceholder="Gold"
+    />
+  )
+}
+
 /* ─── ADMIN (admin-only roster + users) ────────────────────── */
 
 function AdminPage() {
@@ -2990,6 +3017,7 @@ function AdminDrawPage({ channel, label }) {
 
 function RepairDrawPage() { return <AdminDrawPage channel="repair" label="Repair Lucky Draw"/> }
 function SoochiDrawPage() { return <AdminDrawPage channel="food"   label="Soochi Lucky Draw"/> }
+function MembershipDrawPage() { return <AdminDrawPage channel="membership" label="Membership Lucky Draw"/> }
 
 function AdminInner({ user, role }) {
   const [tab, setTab] = useState('roster')
@@ -2998,7 +3026,7 @@ function AdminInner({ user, role }) {
   const titles = {
     roster:   { title: 'Manage the roster.', sub: 'Add, edit, or remove crew on the public /team page.' },
     users:    { title: 'Manage users.',      sub: 'Create accounts, change roles, block, or remove access. Management-only.' },
-    giveaway: { title: "Benny's launch giveaway.", sub: "Repair and food ticket pools, plus the live spin-wheel draw — 1 car each. The other 8 of the 10 launch-day cars come from separate activities, not tracked here." },
+    giveaway: { title: "Benny's launch giveaway.", sub: "Repair, food, and membership ticket pools, plus the live spin-wheel draw — 1 car each. The other 7 of the 10 launch-day cars come from separate activities, not tracked here." },
     settings: { title: 'Settings.',          sub: 'Integrations and secrets. Admin-only — never visible to public visitors.' },
     audit:    { title: 'Audit log.',         sub: 'Every giveaway entry created, edited, or removed — when (IST) and by which account. Management-only.' },
   }
@@ -3015,6 +3043,7 @@ function AdminInner({ user, role }) {
           <span className="admin-quick-actions-label">Lucky draw, for stream:</span>
           <Link to="/repair-draw" target="_blank" rel="noreferrer" className="btn btn--primary btn--sm">Repair Lucky Draw ↗</Link>
           <Link to="/soochi-draw" target="_blank" rel="noreferrer" className="btn btn--primary btn--sm">Soochi Lucky Draw ↗</Link>
+          <Link to="/membership-draw" target="_blank" rel="noreferrer" className="btn btn--primary btn--sm">Membership Lucky Draw ↗</Link>
         </div>
 
         <div className="tabs tabs--main">
@@ -3317,6 +3346,7 @@ function GiveawayPool({ channel, label, streamLink }) {
   const [pendingWinner, setPendingWinner] = useState(null)
   const [busy, setBusy]           = useState(false)
   const [celebrate, setCelebrate] = useState(false)
+  const [spinNonce, setSpinNonce] = useState(0)   // bumps each tick so the reel re-animates
   const timerRef = useRef(null)
 
   useEffect(() => {
@@ -3346,20 +3376,31 @@ function GiveawayPool({ channel, label, streamLink }) {
     const idx = crypto.getRandomValues(new Uint32Array(1))[0] % eligible.length
     const winner = eligible[idx]
 
-    let delay = 60
+    // Slot-reel cadence: most ticks fly by fast (a blur), then the delay ramps
+    // up steeply over the last few for a suspenseful slow-down before it lands.
+    // easeInQuart keeps the curve flat early and spikes late; total ≈ 4s.
+    const totalTicks = 30
+    const minDelay = 34
+    const maxDelay = 560
+    const easeInQuart = p => p * p * p * p
+
     let ticks = 0
-    const maxTicks = 26
     const tick = () => {
-      setDisplay(eligible[Math.floor(Math.random() * eligible.length)])
       ticks++
-      if (ticks >= maxTicks) {
+      if (ticks >= totalTicks) {
         setDisplay(winner)
         setSpinning(false)
         setPendingWinner(winner)
         setCelebrate(true)
         return
       }
-      delay *= 1.16
+      // Never flash the actual winner mid-spin — in a tiny pool that would spoil
+      // the reveal — so nudge off it if the random pick lands on the winner.
+      let pickIdx = Math.floor(Math.random() * eligible.length)
+      if (eligible.length > 1 && eligible[pickIdx].id === winner.id) pickIdx = (pickIdx + 1) % eligible.length
+      setDisplay(eligible[pickIdx])
+      setSpinNonce(n => n + 1)
+      const delay = minDelay + (maxDelay - minDelay) * easeInQuart(ticks / totalTicks)
       timerRef.current = setTimeout(tick, delay)
     }
     tick()
@@ -3407,30 +3448,33 @@ function GiveawayPool({ channel, label, streamLink }) {
         <div className="draw-stage-glow" aria-hidden="true"/>
         {celebrate && (
           <div className="draw-sparks" aria-hidden="true">
-            {Array.from({ length: 18 }).map((_, i) => (
+            {Array.from({ length: 26 }).map((_, i) => (
               <motion.span key={i} className="draw-spark"
                 initial={{ x: 0, y: 0, opacity: 1, scale: 1 }}
                 animate={{
-                  x: Math.cos((i / 18) * Math.PI * 2) * (60 + (i % 3) * 18),
-                  y: Math.sin((i / 18) * Math.PI * 2) * (60 + (i % 3) * 18) - 10,
+                  x: Math.cos((i / 26) * Math.PI * 2) * (78 + (i % 4) * 22),
+                  y: Math.sin((i / 26) * Math.PI * 2) * (78 + (i % 4) * 22) - 12,
                   opacity: 0, scale: 0,
                 }}
-                transition={{ duration: .9, ease: 'easeOut' }}
+                transition={{ duration: 1, ease: 'easeOut', delay: (i % 3) * .04 }}
               />
             ))}
           </div>
         )}
         {display ? (
           spinning ? (
-            <div className="draw-stage-content draw-stage-content--spin">
+            <motion.div key={spinNonce} className="draw-stage-content draw-stage-content--spin"
+              initial={{ y: '60%', opacity: 0 }}
+              animate={{ y: '0%', opacity: 1 }}
+              transition={{ duration: .11, ease: 'easeOut' }}>
               <div className="draw-stage-name">{display.name}</div>
               <div className="draw-stage-code">Ticket {display.code}</div>
-            </div>
+            </motion.div>
           ) : (
             <motion.div className="draw-stage-content"
-              initial={{ scale: 1.35, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              transition={{ type: 'spring', stiffness: 300, damping: 15 }}>
+              initial={{ scale: 1.5, opacity: 0, rotate: -3 }}
+              animate={{ scale: 1, opacity: 1, rotate: 0 }}
+              transition={{ type: 'spring', stiffness: 420, damping: 13, mass: .7 }}>
               <div className="draw-stage-name">{display.name}</div>
               <div className="draw-stage-code">Ticket {display.code}</div>
             </motion.div>
@@ -3526,10 +3570,10 @@ function AdminGiveaway() {
   const winners = useMemo(() =>
     allTickets.filter(t => t.won).sort((a, b) => (b.wonAt?.seconds ?? 0) - (a.wonAt?.seconds ?? 0)),
     [allTickets])
-  const totalCars = CARS_PER_CHANNEL.repair + CARS_PER_CHANNEL.food
+  const totalCars = CARS_PER_CHANNEL.repair + CARS_PER_CHANNEL.food + CARS_PER_CHANNEL.membership
 
   const copyWinners = () => {
-    const text = winners.map(w => `${w.wonPrize} — ${w.name} (ticket ${w.code}, ${w.channel === 'repair' ? 'Repair Lucky Draw' : 'Soochi Lucky Draw'})`).join('\n')
+    const text = winners.map(w => `${w.wonPrize} — ${w.name} (ticket ${w.code}, ${channelDrawLabel(w.channel)})`).join('\n')
     navigator.clipboard?.writeText(text || 'No winners yet.')
   }
 
@@ -3565,8 +3609,9 @@ function AdminGiveaway() {
   return (
     <>
       <div className="giveaway-grid">
-        <GiveawayPool channel="repair" label="Repair Lucky Draw" streamLink="/repair-draw"/>
-        <GiveawayPool channel="food"   label="Soochi Lucky Draw" streamLink="/soochi-draw"/>
+        <GiveawayPool channel="repair"     label="Repair Lucky Draw"     streamLink="/repair-draw"/>
+        <GiveawayPool channel="food"       label="Soochi Lucky Draw"     streamLink="/soochi-draw"/>
+        <GiveawayPool channel="membership" label="Membership Lucky Draw" streamLink="/membership-draw"/>
       </div>
 
       <div className="log-list-h">All winners · {winners.length} / {totalCars}</div>
@@ -3582,7 +3627,7 @@ function AdminGiveaway() {
               <div className="req-name">{w.name}</div>
               <span className="status status--done">{w.wonPrize}</span>
             </div>
-            <div className="req-vehicle">Ticket {w.code} · {w.channel === 'repair' ? 'Repair Lucky Draw' : 'Soochi Lucky Draw'}</div>
+            <div className="req-vehicle">Ticket {w.code} · {channelDrawLabel(w.channel)}</div>
             <div className="req-foot">
               <button className="btn btn--del btn--sm" onClick={() => deleteWinner(w)} disabled={busyId === w.id}>
                 {busyId === w.id ? 'Deleting…' : 'Delete win'}
@@ -3680,6 +3725,7 @@ function AdminUsers({ currentUser }) {
               <option value="crew">Crew — staff dashboard, logs, reviews</option>
               <option value="bennys">Benny's — giveaway repair-token issuer only</option>
               <option value="soochi">Soochi — giveaway food-token issuer only</option>
+              <option value="membership">Membership — giveaway membership-token issuer only</option>
               <option value="admin">Admin — everything (including this page)</option>
               <option value="management">Management — same as Admin, full access</option>
             </select>
@@ -3716,6 +3762,7 @@ function AdminUsers({ currentUser }) {
                 <option value="crew">Crew</option>
                 <option value="bennys">Benny's</option>
                 <option value="soochi">Soochi</option>
+                <option value="membership">Membership</option>
                 <option value="admin">Admin</option>
                 <option value="management">Management</option>
                 <option value="blocked">Blocked</option>
@@ -3769,7 +3816,7 @@ function ScrollToTop() {
 
 export default function App() {
   const loc = useLocation()
-  const isDrawPage = loc.pathname === '/repair-draw' || loc.pathname === '/soochi-draw'
+  const isDrawPage = loc.pathname === '/repair-draw' || loc.pathname === '/soochi-draw' || loc.pathname === '/membership-draw'
   return (
     <Fragment>
       <ScrollToTop/>
@@ -3788,9 +3835,11 @@ export default function App() {
             <Route path="/staff"     element={<StaffPage/>}/>
             <Route path="/bennys"    element={<BennysPage/>}/>
             <Route path="/soochi"    element={<SoochiPage/>}/>
+            <Route path="/membership" element={<MembershipPage/>}/>
             <Route path="/admin"     element={<AdminPage/>}/>
             <Route path="/repair-draw" element={<RepairDrawPage/>}/>
             <Route path="/soochi-draw" element={<SoochiDrawPage/>}/>
+            <Route path="/membership-draw" element={<MembershipDrawPage/>}/>
             <Route path="*"          element={<NotFound/>}/>
           </Routes>
         </PageTransition>

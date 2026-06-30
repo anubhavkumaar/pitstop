@@ -1673,9 +1673,11 @@ select:focus { outline: none; border-color: var(--brand); }
   background: radial-gradient(60% 70% at 50% 50%, rgba(230,57,70,.1), transparent 70%);
   opacity: .55; transition: opacity .3s ease;
 }
-.draw-stage.is-spinning .draw-stage-glow { opacity: 1; animation: draw-pulse .6s ease-in-out infinite; }
-.draw-stage.is-celebrating .draw-stage-glow { opacity: 1; background: radial-gradient(60% 70% at 50% 50%, rgba(230,57,70,.22), transparent 70%); }
-@keyframes draw-pulse { 0%, 100% { opacity: .6; } 50% { opacity: 1; } }
+.draw-stage.is-spinning .draw-stage-glow { opacity: 1; animation: draw-pulse .42s ease-in-out infinite; }
+.draw-stage.is-celebrating { animation: draw-thump .5s cubic-bezier(.2,1.4,.35,1) 1; }
+.draw-stage.is-celebrating .draw-stage-glow { opacity: 1; background: radial-gradient(62% 74% at 50% 50%, rgba(230,57,70,.3), transparent 72%); }
+@keyframes draw-pulse { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+@keyframes draw-thump { 0% { transform: scale(1); } 30% { transform: scale(1.035); } 100% { transform: scale(1); } }
 
 .draw-sparks { position: absolute; inset: 0; pointer-events: none; display: flex; align-items: center; justify-content: center; }
 .draw-spark {
@@ -1684,7 +1686,8 @@ select:focus { outline: none; border-color: var(--brand); }
 }
 
 .draw-stage-content { display: flex; flex-direction: column; align-items: center; gap: .35rem; text-align: center; position: relative; z-index: 1; }
-.draw-stage-content--spin { filter: blur(.3px); }
+.draw-stage-content--spin { filter: blur(.5px); opacity: .9; will-change: transform; }
+.draw-stage-content--spin .draw-stage-code { opacity: .55; }
 .draw-stage-name {
   font-family: var(--display); font-size: clamp(1.6rem, 3vw, 2.4rem);
   letter-spacing: .02em; color: var(--chrome);

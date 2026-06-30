@@ -9,7 +9,7 @@ import {
 } from 'firebase/firestore'
 import {
   signInWithEmailAndPassword, signOut, onAuthStateChanged,
-  createUserWithEmailAndPassword, signOut as signOutSecondary,
+  createUserWithEmailAndPassword, signOut as signOutSecondary, updatePassword,
 } from 'firebase/auth'
 import { CheckeredStrip } from './Logo'
 import { IconWrench, IconUpgrade, IconGauge, IconWash, IconPickup, IconRescue, IconFlag, IconCash, IconCamera, IconStar } from './icons'
@@ -41,7 +41,9 @@ const isStaff = (user, role) => !!user && role !== 'blocked' && (isBootstrapOwne
 // never see.
 const canRepairTokens = (user, role) => isAdmin(user, role) || role === 'crew' || role === 'bennys'
 const canFoodTokens   = (user, role) => isAdmin(user, role) || role === 'soochi'
-const canMemberTokens = (user, role) => isAdmin(user, role) || role === 'membership'
+// Benny's crew can issue membership tokens too (not just the dedicated
+// 'membership' role) — they run the counter where memberships are sold.
+const canMemberTokens = (user, role) => isAdmin(user, role) || role === 'membership' || role === 'bennys'
 // Editing/deleting raw ticket entries (not just draw results) is deliberately
 // narrower than isAdmin() — management only, per request, even though plain
 // admins can do everything else in the giveaway tooling.
@@ -3646,12 +3648,27 @@ function AdminUsers({ currentUser }) {
   const [users, setUsers]   = useState([])
   const [draft, setDraft]   = useState({ email: '', password: '', displayName: '', role: 'crew' })
   const [status, setStatus] = useState({ state: 'idle', msg: '' })
+  const [secretsMap, setSecretsMap] = useState({})  // uid → stored password (management-only)
+  const [pwDrafts, setPwDrafts]     = useState({})  // uid → new-password text
+  const [pwBusy, setPwBusy]         = useState(null) // uid currently saving
 
   useEffect(() => {
     const unsub = onSnapshot(
       query(collection(db, 'pitstop_users'), orderBy('createdAt', 'desc')),
       snap => setUsers(snap.docs.map(d => ({ uid: d.id, ...d.data() }))),
       err => console.error('[admin users] read failed:', err)
+    )
+    return unsub
+  }, [])
+
+  // Stored-password mirror (only readable by management). Drives which accounts
+  // can be reset client-side — ones without an entry have no known password to
+  // re-login with, so their reset control is hidden.
+  useEffect(() => {
+    const unsub = onSnapshot(
+      collection(db, 'pitstop_user_secrets'),
+      snap => { const m = {}; snap.docs.forEach(d => { m[d.id] = d.data().password }); setSecretsMap(m) },
+      err => console.error('[admin secrets] read failed:', err)
     )
     return unsub
   }, [])
@@ -3677,6 +3694,10 @@ function AdminUsers({ currentUser }) {
         createdBy:   currentUser.email,
       })
 
+      // Mirror the password (management-only collection) so it can be reset
+      // later without a server/Admin SDK. See setPassword() below.
+      await setDoc(doc(db, 'pitstop_user_secrets', uid), { password: draft.password }).catch(() => {})
+
       // Sign the secondary session out so the next create starts clean.
       await signOutSecondary(secondaryAuth).catch(() => {})
 
@@ -3700,8 +3721,37 @@ function AdminUsers({ currentUser }) {
 
   const removeUser = async u => {
     if (!confirm(`Remove ${u.email} from the user list?\n\nNote: this only removes their role doc — the Auth account itself stays until you delete it from Firebase Console → Authentication → Users.`)) return
-    try { await deleteDoc(doc(db, 'pitstop_users', u.uid)) }
+    try {
+      await deleteDoc(doc(db, 'pitstop_users', u.uid))
+      await deleteDoc(doc(db, 'pitstop_user_secrets', u.uid)).catch(() => {})
+    }
     catch (err) { alert('Delete failed: ' + (err.message || err.code)) }
+  }
+
+  // Reset another account's password without a backend: sign into the secondary
+  // auth app *as that user* using their stored password, change it, then mirror
+  // the new one. Only works for accounts that have a stored password.
+  const setPassword = async u => {
+    const newPass = (pwDrafts[u.uid] || '')
+    if (newPass.length < 6) { alert('Password must be at least 6 characters.'); return }
+    const storedPass = secretsMap[u.uid]
+    if (!storedPass) { alert("No stored password for this account, so it can't be reset here. Recreate the account, or have the user change it from their own login."); return }
+    if (!confirm(`Set a new password for ${u.email}? Anyone using that login will need the new password.`)) return
+    setPwBusy(u.uid)
+    try {
+      await signInWithEmailAndPassword(secondaryAuth, u.email, storedPass)
+      await updatePassword(secondaryAuth.currentUser, newPass)
+      await signOutSecondary(secondaryAuth).catch(() => {})
+      await setDoc(doc(db, 'pitstop_user_secrets', u.uid), { password: newPass }, { merge: true })
+      setPwDrafts(d => ({ ...d, [u.uid]: '' }))
+      alert(`Password updated for ${u.email}.`)
+    } catch (err) {
+      // Stored password no longer matches Auth (e.g. changed elsewhere) → can't re-login.
+      const msg = (err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential')
+        ? 'Stored password is out of date for this account — reset it from the Firebase Console once, then it works here again.'
+        : (err.message || err.code)
+      alert('Could not set password: ' + msg)
+    } finally { setPwBusy(null) }
   }
 
   return (
@@ -3768,6 +3818,21 @@ function AdminUsers({ currentUser }) {
                 <option value="blocked">Blocked</option>
               </select>
               <button className="btn btn--del btn--sm" onClick={() => removeUser(u)} disabled={u.uid === currentUser.uid}>Remove</button>
+            </div>
+            <div className="req-foot user-pw-row">
+              {secretsMap[u.uid] ? (
+                <>
+                  <input type="password" className="user-pw-input" placeholder="New password (min 6)"
+                    autoComplete="new-password" value={pwDrafts[u.uid] || ''}
+                    onChange={e => setPwDrafts(d => ({ ...d, [u.uid]: e.target.value }))}/>
+                  <button className="btn btn--ghost btn--sm" onClick={() => setPassword(u)}
+                    disabled={pwBusy === u.uid || (pwDrafts[u.uid] || '').length < 6}>
+                    {pwBusy === u.uid ? 'Setting…' : 'Set password'}
+                  </button>
+                </>
+              ) : (
+                <span className="user-pw-none">No stored password — reset unavailable for this account.</span>
+              )}
             </div>
           </div>
         ))}

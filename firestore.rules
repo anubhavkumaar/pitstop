@@ -55,6 +55,14 @@ service cloud.firestore {
       allow create, update, delete: if isManagementOnly();
     }
 
+    // Plaintext password mirror — lets management reset another account's
+    // password client-side (re-login as that user via the secondary auth app,
+    // then updatePassword), avoiding a server/Admin-SDK dependency. Management
+    // only, never readable by the account holders themselves.
+    match /pitstop_user_secrets/{userId} {
+      allow read, write: if isManagementOnly();
+    }
+
     // Secrets / API tokens (e.g. vgy.me userkey for uploads).
     // ADMINS ONLY — never exposed to anonymous visitors.
     match /pitstop_secrets/{doc} {
@@ -122,7 +130,7 @@ service cloud.firestore {
         isAdmin()
         || ((userRole() == 'crew' || userRole() == 'bennys') && request.resource.data.channel == 'repair')
         || (userRole() == 'soochi' && request.resource.data.channel == 'food')
-        || (userRole() == 'membership' && request.resource.data.channel == 'membership')
+        || (userRole() in ['membership', 'bennys'] && request.resource.data.channel == 'membership')
       );
 
       // Draw-tool result flips (won / wonPrize / wonAt only) stay open to any

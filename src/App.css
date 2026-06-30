@@ -593,6 +593,9 @@
 .req-grid dt { font-family: var(--mono); font-size: .72rem; letter-spacing: .14em; text-transform: uppercase; color: var(--t3); padding-top: .2rem; }
 .req-grid dd { margin: 0; color: var(--t1); }
 .req-foot { display: flex; gap: .5rem; flex-wrap: wrap; }
+.user-pw-row { margin-top: .5rem; align-items: center; }
+.user-pw-input { flex: 1 1 200px; min-width: 0; }
+.user-pw-none { color: var(--t3); font-size: .8rem; font-style: italic; }
 
 .empty { color: var(--t3); text-align: center; padding: 2rem; font-style: italic; }
 .loading { text-align: center; padding: 6rem 1rem; color: var(--t3); }

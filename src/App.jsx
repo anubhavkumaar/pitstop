@@ -3512,19 +3512,21 @@ function GiveawayPool({ channel, label, streamLink }) {
     const idx = crypto.getRandomValues(new Uint32Array(1))[0] % eligible.length
     const winner = eligible[idx]
 
-    // Slot-reel cadence: names blur past fast early, then the delay ramps up
-    // steeply over the final ticks for a long, suspenseful slow-down before it
-    // lands. easeInQuint keeps the curve flat early and spikes late; the tuning
-    // below totals ≈ 22s so it plays well on stream.
-    const totalTicks = 64
-    const minDelay = 28
-    const maxDelay = 1900
-    const easeInQuint = p => p * p * p * p * p
+    // Time-based cadence: ~20s of fast blur, then a gentle ~5s ease-up before it
+    // lands (≈25s total). The slow-phase delay is capped at slowMax so the final
+    // flips slow down noticeably without the agonising multi-second freezes.
+    const FAST_MS = 20000
+    const SLOW_MS = 5000
+    const fastDelay = 55
+    const slowMax = 420
+    const easeInCubic = p => p * p * p
+    const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now())
+    const start = now()
 
-    let ticks = 0
+    let seq = 0
     const tick = () => {
-      ticks++
-      if (ticks >= totalTicks) {
+      const elapsed = now() - start
+      if (elapsed >= FAST_MS + SLOW_MS) {
         setDisplay(winner)
         setSpinning(false)
         setPendingWinner(winner)
@@ -3532,6 +3534,7 @@ function GiveawayPool({ channel, label, streamLink }) {
         setReel([])
         return
       }
+      seq++
       // Never flash the actual winner mid-spin — in a tiny pool that would spoil
       // the reveal — so nudge off it if the random pick lands on the winner.
       let pickIdx = Math.floor(Math.random() * eligible.length)
@@ -3540,8 +3543,12 @@ function GiveawayPool({ channel, label, streamLink }) {
       setDisplay(pick)
       // Keep a short rolling window of recent names so the stage reads as a live
       // list scrolling by, not a single flickering label.
-      setReel(prev => [...prev, { key: `${ticks}-${pick.id}`, code: pick.code, name: pick.name }].slice(-6))
-      const delay = minDelay + (maxDelay - minDelay) * easeInQuint(ticks / totalTicks)
+      setReel(prev => [...prev, { key: `${seq}-${pick.id}`, code: pick.code, name: pick.name }].slice(-6))
+      let delay = fastDelay
+      if (elapsed >= FAST_MS) {
+        const p = (elapsed - FAST_MS) / SLOW_MS   // 0→1 across the slow phase
+        delay = fastDelay + (slowMax - fastDelay) * easeInCubic(p)
+      }
       timerRef.current = setTimeout(tick, delay)
     }
     tick()
@@ -3553,7 +3560,7 @@ function GiveawayPool({ channel, label, streamLink }) {
     try {
       await updateDoc(doc(db, 'bennys_tokens', pendingWinner.id), {
         won: true,
-        wonPrize: `${label} — Car #${winners.length + 1}`,
+        wonPrize: `${label} — Winner ${winners.length + 1}`,
         wonAt: serverTimestamp(),
       })
       setPendingWinner(null); setDisplay(null); setCelebrate(false)
@@ -3672,13 +3679,13 @@ function GiveawayPool({ channel, label, streamLink }) {
         {!pendingWinner ? (
           slotsLeft > 0 ? (
             <button className="btn btn--primary btn--lg" onClick={spin} disabled={spinning || eligible.length === 0}>
-              {spinning ? 'Spinning…' : eligible.length === 0 ? 'No one left to draw' : `Spin for Car #${winners.length + 1}`}
+              {spinning ? 'Spinning…' : eligible.length === 0 ? 'No one left to draw' : winners.length === 0 ? 'Spin to find a winner' : 'Find another winner'}
             </button>
           ) : (
             // Target reached — never a dead end: one tap raises the target so the
             // operator can keep drawing more winners from the same pool.
             <button className="btn btn--primary btn--lg" onClick={() => setTarget(t => t + 1)} disabled={eligible.length === 0}>
-              {eligible.length === 0 ? 'No one left to draw' : '+ Draw another winner'}
+              {eligible.length === 0 ? 'No one left to draw' : 'Find another winner'}
             </button>
           )
         ) : (

@@ -131,6 +131,8 @@ service cloud.firestore {
         || ((userRole() == 'crew' || userRole() == 'bennys') && request.resource.data.channel == 'repair')
         || (userRole() == 'soochi' && request.resource.data.channel == 'food')
         || (userRole() in ['membership', 'bennys'] && request.resource.data.channel == 'membership')
+        // PD & EMS membership pools — same issuers as regular memberships.
+        || (userRole() in ['membership', 'bennys'] && request.resource.data.channel in ['pd', 'ems'])
       );
 
       // Draw-tool result flips (won / wonPrize / wonAt only) stay open to any

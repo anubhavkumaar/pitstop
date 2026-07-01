@@ -44,6 +44,9 @@ const canFoodTokens   = (user, role) => isAdmin(user, role) || role === 'soochi'
 // Benny's crew can issue membership tokens too (not just the dedicated
 // 'membership' role) — they run the counter where memberships are sold.
 const canMemberTokens = (user, role) => isAdmin(user, role) || role === 'membership' || role === 'bennys'
+// PD & EMS membership tickets — issued by the same people as regular
+// memberships (admins + membership/bennys crew); each has its own pool + draw.
+const canPdEmsTokens = (user, role) => canMemberTokens(user, role)
 // Editing/deleting raw ticket entries (not just draw results) is deliberately
 // narrower than isAdmin() — management only, per request, even though plain
 // admins can do everything else in the giveaway tooling.
@@ -52,11 +55,11 @@ const canManageEntries = (user, role) => isBootstrapOwner(user) || role === 'man
 // Giveaway car allocation — 1 car drawn per ticket channel. The other 7 of
 // the 10 launch-day cars come from separate, non-ticket activities run live
 // at the event and aren't tracked by this tool.
-const CARS_PER_CHANNEL = { repair: 1, food: 1, membership: 1 }
+const CARS_PER_CHANNEL = { repair: 1, food: 1, membership: 1, pd: 1, ems: 1 }
 // Per-channel ticket code prefix and the human label used everywhere a draw is
-// named. Keep these three channels in sync with CARS_PER_CHANNEL.
-const CHANNEL_PREFIX     = { repair: 'R', food: 'F', membership: 'M' }
-const CHANNEL_DRAW_LABEL = { repair: 'Repair Lucky Draw', food: 'Soochi Lucky Draw', membership: 'Membership Lucky Draw' }
+// named. Keep these channels in sync with CARS_PER_CHANNEL.
+const CHANNEL_PREFIX     = { repair: 'R', food: 'F', membership: 'M', pd: 'PD', ems: 'EM' }
+const CHANNEL_DRAW_LABEL = { repair: 'Repair Lucky Draw', food: 'Soochi Lucky Draw', membership: 'Membership Lucky Draw', pd: 'PD Lucky Draw', ems: 'EMS Lucky Draw' }
 const channelDrawLabel = channel => CHANNEL_DRAW_LABEL[channel] || channel
 
 // Contact-form cooldown so one visitor can't spam the inbox.
@@ -641,6 +644,8 @@ function Nav() {
     canRepairTokens(user, role) && { to: '/bennys', label: "Benny's" },
     canFoodTokens(user, role)   && { to: '/soochi', label: 'Soochi' },
     canMemberTokens(user, role) && { to: '/membership', label: 'Membership' },
+    canPdEmsTokens(user, role)  && { to: '/pd',  label: 'PD' },
+    canPdEmsTokens(user, role)  && { to: '/ems', label: 'EMS' },
     isAdmin(user, role)         && { to: '/admin',  label: 'Admin' },
   ].filter(Boolean) : []
 
@@ -2345,10 +2350,14 @@ function PortalDashboard({ user, role }) {
     canRepairTokens(user, role) && { to: '/bennys', icon: IconWrench, title: "Benny's Tickets", desc: 'Issue a giveaway ticket per paid repair.' },
     canFoodTokens(user, role)   && { to: '/soochi', icon: IconWash,   title: 'Soochi Tickets',   desc: 'Add a giveaway ticket per meal sold.' },
     canMemberTokens(user, role) && { to: '/membership', icon: IconStar, title: 'Membership Tickets', desc: 'Add a giveaway ticket per membership sold.' },
+    canPdEmsTokens(user, role) && { to: '/pd',  icon: IconStar, title: 'PD Tickets',  desc: 'Add a giveaway ticket per PD membership.' },
+    canPdEmsTokens(user, role) && { to: '/ems', icon: IconStar, title: 'EMS Tickets', desc: 'Add a giveaway ticket per EMS membership.' },
     isAdmin(user, role) && { to: '/admin', icon: IconUpgrade, title: 'Admin Panel', desc: 'Roster, users, the giveaway, and settings.' },
     isAdmin(user, role) && { to: '/repair-draw', icon: IconGauge, title: 'Repair Lucky Draw', desc: 'Live spin, stream-ready.', external: true },
     isAdmin(user, role) && { to: '/soochi-draw', icon: IconGauge, title: 'Soochi Lucky Draw', desc: 'Live spin, stream-ready.', external: true },
     isAdmin(user, role) && { to: '/membership-draw', icon: IconGauge, title: 'Membership Lucky Draw', desc: 'Live spin, stream-ready.', external: true },
+    isAdmin(user, role) && { to: '/pd-draw',  icon: IconGauge, title: 'PD Lucky Draw',  desc: 'Live spin, stream-ready.', external: true },
+    isAdmin(user, role) && { to: '/ems-draw', icon: IconGauge, title: 'EMS Lucky Draw', desc: 'Live spin, stream-ready.', external: true },
   ].filter(Boolean)
 
   return (
@@ -3059,6 +3068,42 @@ function MembershipPage() {
   )
 }
 
+function PdPage() {
+  return (
+    <GiveawayIssuePage
+      channel="pd"
+      canIssue={canPdEmsTokens}
+      kicker="PD"
+      deniedLabel="PD"
+      title="Issue a PD giveaway token."
+      sub="One token per PD membership. Enter the member's name and Citizen ID; the code is their raffle ticket for the launch-day car giveaway."
+      nameLabel="Member name"
+      namePlaceholder="Ana Pratap"
+      showNote
+      noteLabel="Note (optional)"
+      notePlaceholder="Rank / division"
+    />
+  )
+}
+
+function EmsPage() {
+  return (
+    <GiveawayIssuePage
+      channel="ems"
+      canIssue={canPdEmsTokens}
+      kicker="EMS"
+      deniedLabel="EMS"
+      title="Issue an EMS giveaway token."
+      sub="One token per EMS membership. Enter the member's name and Citizen ID; the code is their raffle ticket for the launch-day car giveaway."
+      nameLabel="Member name"
+      namePlaceholder="Milo August"
+      showNote
+      noteLabel="Note (optional)"
+      notePlaceholder="Tier / division"
+    />
+  )
+}
+
 /* ─── ADMIN (admin-only roster + users) ────────────────────── */
 
 function AdminPage() {
@@ -3150,6 +3195,8 @@ function AdminDrawPage({ channel, label }) {
 function RepairDrawPage() { return <AdminDrawPage channel="repair" label="Repair Lucky Draw"/> }
 function SoochiDrawPage() { return <AdminDrawPage channel="food"   label="Soochi Lucky Draw"/> }
 function MembershipDrawPage() { return <AdminDrawPage channel="membership" label="Membership Lucky Draw"/> }
+function PdDrawPage() { return <AdminDrawPage channel="pd"  label="PD Lucky Draw"/> }
+function EmsDrawPage() { return <AdminDrawPage channel="ems" label="EMS Lucky Draw"/> }
 
 function AdminInner({ user, role }) {
   const [tab, setTab] = useState('roster')
@@ -3158,7 +3205,7 @@ function AdminInner({ user, role }) {
   const titles = {
     roster:   { title: 'Manage the roster.', sub: 'Add, edit, or remove crew on the public /team page.' },
     users:    { title: 'Manage users.',      sub: 'Create accounts, change roles, block, or remove access. Management-only.' },
-    giveaway: { title: "Benny's launch giveaway.", sub: "Repair, food, and membership ticket pools, plus the live spin-wheel draw — 1 car each. The other 7 of the 10 launch-day cars come from separate activities, not tracked here." },
+    giveaway: { title: "Benny's launch giveaway.", sub: "Repair, food, membership, PD, and EMS ticket pools, plus the live spin-wheel draw. Each pool picks how many winners to draw." },
     settings: { title: 'Settings.',          sub: 'Integrations and secrets. Admin-only — never visible to public visitors.' },
     audit:    { title: 'Audit log.',         sub: 'Every giveaway entry created, edited, or removed — when (IST) and by which account. Management-only.' },
   }
@@ -3176,6 +3223,8 @@ function AdminInner({ user, role }) {
           <Link to="/repair-draw" target="_blank" rel="noreferrer" className="btn btn--primary btn--sm">Repair Lucky Draw ↗</Link>
           <Link to="/soochi-draw" target="_blank" rel="noreferrer" className="btn btn--primary btn--sm">Soochi Lucky Draw ↗</Link>
           <Link to="/membership-draw" target="_blank" rel="noreferrer" className="btn btn--primary btn--sm">Membership Lucky Draw ↗</Link>
+          <Link to="/pd-draw" target="_blank" rel="noreferrer" className="btn btn--primary btn--sm">PD Lucky Draw ↗</Link>
+          <Link to="/ems-draw" target="_blank" rel="noreferrer" className="btn btn--primary btn--sm">EMS Lucky Draw ↗</Link>
         </div>
 
         <div className="tabs tabs--main">
@@ -3707,6 +3756,7 @@ function GiveawayPool({ channel, label, streamLink }) {
 
 function AdminAuditLog() {
   const [logs, setLogs] = useState([])
+  const [rebuilding, setRebuilding] = useState(false)
 
   useEffect(() => {
     const unsub = onSnapshot(
@@ -3723,38 +3773,106 @@ function AdminAuditLog() {
 
   const actionStatus = a => a === 'created' ? 'accepted' : a === 'removed' ? 'cancelled' : 'new'
 
+  // One-time recovery: reconstruct 'created' rows from the tickets themselves,
+  // for issuances whose audit write was denied before all roles could log.
+  // Run by management (who can always write the log), so it recovers entries
+  // that the issuing account itself never could. Skips codes already logged.
+  const rebuildFromTickets = async () => {
+    if (rebuilding) return
+    if (!(await showConfirm({ title: 'Rebuild audit log from tickets?', message: 'Adds a "created" entry for every ticket that has no audit row yet, using the issuer recorded on the ticket. Existing entries are untouched.', confirmLabel: 'Rebuild' }))) return
+    setRebuilding(true)
+    try {
+      const [tokSnap, createdSnap] = await Promise.all([
+        getDocs(collection(db, 'bennys_tokens')),
+        getDocs(query(collection(db, 'bennys_audit_log'), where('action', '==', 'created'))),
+      ])
+      const already = new Set(createdSnap.docs.map(d => d.data().code))
+      const missing = tokSnap.docs.map(d => ({ id: d.id, ...d.data() }))
+        .filter(t => t.code && !already.has(t.code))
+      if (missing.length === 0) { showToast('Audit log already covers every ticket.', 'ok'); return }
+      for (const t of missing) {
+        await addDoc(collection(db, 'bennys_audit_log'), {
+          action: 'created', code: t.code, channel: t.channel || '', name: t.name || '',
+          before: null, after: null,
+          performedByUid:   t.issuedByUid   || null,
+          performedByLabel: t.issuedByLabel || 'unknown',
+          createdAt: t.createdAt || serverTimestamp(),
+          backfilled: true,
+        })
+      }
+      showToast(`Recovered ${missing.length} audit ${missing.length === 1 ? 'entry' : 'entries'} from tickets.`, 'ok')
+    } catch (err) {
+      showToast('Rebuild failed: ' + (err.message || err.code), 'err')
+    } finally { setRebuilding(false) }
+  }
+
   return (
-    <div className="ticket-table-wrap">
-      <table className="ticket-table">
-        <thead>
-          <tr>
-            <th>When (IST)</th>
-            <th>Action</th>
-            <th>Ticket</th>
-            <th>Name</th>
-            <th>By</th>
-          </tr>
-        </thead>
-        <tbody>
-          {logs.length === 0 && <tr><td colSpan={5} className="empty">No activity logged yet.</td></tr>}
-          {logs.map(l => (
-            <tr key={l.id}>
-              <td>{fmtStamp(l.createdAt)}</td>
-              <td><span className={`status status--${actionStatus(l.action)}`}>{l.action}</span></td>
-              <td className="ticket-table-code">{l.code}</td>
-              <td>{l.name}</td>
-              <td>{l.performedByLabel}</td>
+    <>
+      <div className="form-foot" style={{ marginBottom: '1rem', alignItems: 'center' }}>
+        <button className="btn btn--ghost btn--sm" onClick={rebuildFromTickets} disabled={rebuilding}>
+          {rebuilding ? 'Rebuilding…' : 'Rebuild from tickets'}
+        </button>
+        <span className="t3">Recovers issuances made before audit logging was enabled for all roles.</span>
+      </div>
+      <div className="ticket-table-wrap">
+        <table className="ticket-table">
+          <thead>
+            <tr>
+              <th>When (IST)</th>
+              <th>Action</th>
+              <th>Ticket</th>
+              <th>Name</th>
+              <th>By</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+          </thead>
+          <tbody>
+            {logs.length === 0 && <tr><td colSpan={5} className="empty">No activity logged yet.</td></tr>}
+            {logs.map(l => (
+              <tr key={l.id}>
+                <td>{fmtStamp(l.createdAt)}</td>
+                <td><span className={`status status--${actionStatus(l.action)}`}>{l.action}{l.backfilled ? ' ·rebuilt' : ''}</span></td>
+                <td className="ticket-table-code">{l.code}</td>
+                <td>{l.name}</td>
+                <td>{l.performedByLabel}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
   )
 }
 
+// Launch-day PD/EMS entries, provided up front. Seeded once by an admin via the
+// Giveaway panel; the seed is idempotent — it skips any Citizen ID already in a
+// channel, so re-clicking never duplicates.
+const PD_EMS_SEED = {
+  pd: [
+    { name: 'Ana Pratap',      cid: '1428' },
+    { name: 'Krishna Jhosi',   cid: '1341' },
+    { name: 'Zarar Haider',    cid: '4462' },
+    { name: 'Samantha Lee',    cid: '1359' },
+    { name: 'Adi Soni',        cid: '1611' },
+    { name: 'Shivansh Rathod', cid: '1627' },
+    { name: 'Davy Jones',      cid: '2864' },
+  ],
+  ems: [
+    { name: 'Milo August',      cid: '1376' },
+    { name: 'Lucas West',       cid: '6283' },
+    { name: 'Chandru',          cid: '5122' },
+    { name: 'Sachi Mehra',      cid: '5942', note: 'Gold' },
+    { name: 'Zenia Malik',      cid: '1785' },
+    { name: 'Bunty Paul',       cid: '4957' },
+    { name: "Aaron D'Mello",    cid: '5180' },
+    { name: 'Ivy Black',        cid: '6066' },
+  ],
+}
+
 function AdminGiveaway() {
+  const { user } = useAuth()
   const [allTickets, setAllTickets] = useState([])
   const [busyId, setBusyId] = useState(null)
+  const [seeding, setSeeding] = useState(false)
 
   useEffect(() => {
     const unsub = onSnapshot(
@@ -3793,6 +3911,31 @@ function AdminGiveaway() {
     downloadCSV(`bennys-giveaway-${todayISO()}.csv`, toCSV(rows, headers))
   }
 
+  // One-click load of the provided PD/EMS entries. Idempotent: skips any Citizen
+  // ID already present in that channel, so re-running never duplicates.
+  const seedPdEms = async () => {
+    if (seeding) return
+    const present = new Set(allTickets.map(t => `${t.channel}:${(t.citizenId || '').trim()}`))
+    const jobs = []
+    for (const [channel, list] of Object.entries(PD_EMS_SEED)) {
+      for (const e of list) {
+        if (present.has(`${channel}:${e.cid}`)) continue
+        jobs.push({ channel, name: e.name, citizenId: e.cid, note: e.note || '' })
+      }
+    }
+    if (jobs.length === 0) { showToast('PD/EMS entries are already loaded.', 'ok'); return }
+    if (!(await showConfirm({ title: 'Load PD/EMS entries?', message: `Adds ${jobs.length} ticket(s) across PD and EMS. Entries already present (by Citizen ID) are skipped.`, confirmLabel: 'Load entries' }))) return
+    setSeeding(true)
+    try {
+      for (const j of jobs) {
+        await issueGiveawayToken({ channel: j.channel, name: j.name, citizenId: j.citizenId, note: j.note, issuer: user })
+      }
+      showToast(`Loaded ${jobs.length} PD/EMS ${jobs.length === 1 ? 'entry' : 'entries'}.`, 'ok')
+    } catch (err) {
+      showToast('Load failed: ' + (err.message || err.code), 'err')
+    } finally { setSeeding(false) }
+  }
+
   // Deletes any drawn winner, not just the most recent one per channel (that's
   // GiveawayPool's "Undo last win"). Sends the ticket back into its pool.
   const deleteWinner = async w => {
@@ -3809,12 +3952,15 @@ function AdminGiveaway() {
         <GiveawayPool channel="repair"     label="Repair Lucky Draw"     streamLink="/repair-draw"/>
         <GiveawayPool channel="food"       label="Soochi Lucky Draw"     streamLink="/soochi-draw"/>
         <GiveawayPool channel="membership" label="Membership Lucky Draw" streamLink="/membership-draw"/>
+        <GiveawayPool channel="pd"         label="PD Lucky Draw"         streamLink="/pd-draw"/>
+        <GiveawayPool channel="ems"        label="EMS Lucky Draw"        streamLink="/ems-draw"/>
       </div>
 
       <div className="log-list-h">All winners · {winners.length}</div>
       <div className="form-foot" style={{marginBottom: '1rem'}}>
         <button className="btn btn--ghost btn--sm" onClick={copyWinners} disabled={winners.length === 0}>Copy winners list</button>
         <button className="btn btn--ghost btn--sm" onClick={exportCSV} disabled={allTickets.length === 0}>Export all tickets (CSV backup)</button>
+        <button className="btn btn--ghost btn--sm" onClick={seedPdEms} disabled={seeding}>{seeding ? 'Loading…' : 'Load PD/EMS entries'}</button>
       </div>
       <div className="reqs">
         {winners.length === 0 && <div className="empty">No winners drawn yet.</div>}
@@ -4076,7 +4222,7 @@ function ScrollToTop() {
 
 export default function App() {
   const loc = useLocation()
-  const isDrawPage = loc.pathname === '/repair-draw' || loc.pathname === '/soochi-draw' || loc.pathname === '/membership-draw'
+  const isDrawPage = ['/repair-draw', '/soochi-draw', '/membership-draw', '/pd-draw', '/ems-draw'].includes(loc.pathname)
   return (
     <Fragment>
       <ScrollToTop/>
@@ -4097,10 +4243,14 @@ export default function App() {
             <Route path="/bennys"    element={<BennysPage/>}/>
             <Route path="/soochi"    element={<SoochiPage/>}/>
             <Route path="/membership" element={<MembershipPage/>}/>
+            <Route path="/pd"        element={<PdPage/>}/>
+            <Route path="/ems"       element={<EmsPage/>}/>
             <Route path="/admin"     element={<AdminPage/>}/>
             <Route path="/repair-draw" element={<RepairDrawPage/>}/>
             <Route path="/soochi-draw" element={<SoochiDrawPage/>}/>
             <Route path="/membership-draw" element={<MembershipDrawPage/>}/>
+            <Route path="/pd-draw"   element={<PdDrawPage/>}/>
+            <Route path="/ems-draw"  element={<EmsDrawPage/>}/>
             <Route path="*"          element={<NotFound/>}/>
           </Routes>
         </PageTransition>

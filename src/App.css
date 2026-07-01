@@ -1740,19 +1740,42 @@ select:focus { outline: none; border-color: var(--brand); }
   background: var(--brand); box-shadow: 0 0 8px var(--brand), 0 0 14px var(--legacy);
 }
 
-.draw-stage-content { display: flex; flex-direction: column; align-items: center; gap: .35rem; text-align: center; position: relative; z-index: 1; }
-.draw-stage-content--spin { filter: blur(.5px); opacity: .9; will-change: transform; }
-.draw-stage-content--spin .draw-stage-code { opacity: .55; }
+.draw-stage-content { display: flex; flex-direction: column; align-items: center; gap: .3rem; text-align: center; position: relative; z-index: 1; }
+/* The ticket code is the hero on the reveal; the person's name sits under it, small. */
+.draw-stage-code {
+  font-family: var(--mono); font-weight: 700;
+  font-size: clamp(2rem, 5vw, 3.2rem); letter-spacing: .1em;
+  color: var(--brand); text-transform: uppercase;
+}
 .draw-stage-name {
-  font-family: var(--display); font-size: clamp(1.6rem, 3vw, 2.4rem);
+  font-family: var(--display); font-size: clamp(1rem, 2vw, 1.35rem);
   letter-spacing: .02em; color: var(--chrome);
 }
-.draw-stage.is-celebrating .draw-stage-name {
-  color: var(--brand);
-  text-shadow: 0 0 28px rgba(230,57,70,.65), 0 0 8px rgba(230,57,70,.5);
+.draw-stage.is-celebrating .draw-stage-code {
+  text-shadow: 0 0 30px rgba(230,57,70,.7), 0 0 10px rgba(230,57,70,.5);
 }
-.draw-stage-code { font-family: var(--mono); font-size: 1.5rem; font-weight: 600; letter-spacing: .12em; color: var(--brand); text-transform: uppercase; }
 .draw-stage-empty { color: var(--t3); font-size: .95rem; font-style: italic; position: relative; z-index: 1; }
+
+/* Scrolling name reel shown while spinning — a live list of tickets flying by,
+   anchored to the bottom with the current pick highlighted; older rows fade up. */
+.draw-reel {
+  position: relative; z-index: 1;
+  display: flex; flex-direction: column; align-items: center; justify-content: flex-end;
+  gap: .5rem; width: 100%; min-height: 120px;
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0%, #000 44%, #000 100%);
+          mask-image: linear-gradient(to bottom, transparent 0%, #000 44%, #000 100%);
+}
+.draw-reel-row { display: flex; flex-direction: column; align-items: center; gap: .05rem; line-height: 1.05; }
+.draw-reel-code {
+  font-family: var(--mono); font-weight: 600;
+  font-size: clamp(1.4rem, 3.4vw, 2.1rem); letter-spacing: .1em;
+  color: var(--chrome); text-transform: uppercase;
+}
+.draw-reel-name { font-family: var(--display); font-size: clamp(.78rem, 1.5vw, 1rem); color: var(--t2); }
+.draw-reel-row.is-active .draw-reel-code {
+  color: var(--brand); text-shadow: 0 0 22px rgba(230,57,70,.6); transform: scale(1.14);
+}
+.draw-reel-row.is-active .draw-reel-name { color: var(--chrome); }
 
 /* ─── Standalone stream draw page — big, chrome-free, one channel only ── */
 .draw-page {
@@ -1773,9 +1796,12 @@ select:focus { outline: none; border-color: var(--brand); }
 .draw-page-stage .giveaway-pool { padding: 2.6rem 2.2rem; }
 .draw-page-stage .card-title { font-size: 1.7rem; }
 .draw-page-stage .status { font-size: .82rem; padding: .4rem .8rem; }
-.draw-page-stage .draw-stage { min-height: 260px; padding: 2.4rem 1rem; margin: 1rem 0 1.6rem; }
-.draw-page-stage .draw-stage-name { font-size: clamp(2.4rem, 6vw, 4.2rem); }
-.draw-page-stage .draw-stage-code { font-size: clamp(1.6rem, 3vw, 2.2rem); }
+.draw-page-stage .draw-stage { min-height: 300px; padding: 2.4rem 1rem; margin: 1rem 0 1.6rem; }
+.draw-page-stage .draw-stage-code { font-size: clamp(3rem, 8vw, 5.5rem); }
+.draw-page-stage .draw-stage-name { font-size: clamp(1.1rem, 2.6vw, 1.7rem); }
+.draw-page-stage .draw-reel { min-height: 240px; gap: .8rem; }
+.draw-page-stage .draw-reel-code { font-size: clamp(2rem, 5vw, 3.4rem); }
+.draw-page-stage .draw-reel-name { font-size: clamp(.95rem, 1.8vw, 1.2rem); }
 .draw-page-stage .draw-spark { width: 7px; height: 7px; }
 .draw-page-stage .btn--lg { font-size: 1.05rem; padding: 1.15rem 2.2rem; }
 

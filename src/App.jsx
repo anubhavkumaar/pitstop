@@ -3478,7 +3478,7 @@ function GiveawayPool({ channel, label, streamLink }) {
   const [pendingWinner, setPendingWinner] = useState(null)
   const [busy, setBusy]           = useState(false)
   const [celebrate, setCelebrate] = useState(false)
-  const [spinNonce, setSpinNonce] = useState(0)   // bumps each tick so the reel re-animates
+  const [reel, setReel] = useState([])   // rolling list of names shown while spinning
   const timerRef = useRef(null)
 
   useEffect(() => {
@@ -3505,16 +3505,17 @@ function GiveawayPool({ channel, label, streamLink }) {
     setPendingWinner(null)
     setSpinning(true)
     setCelebrate(false)
+    setReel([])
     const idx = crypto.getRandomValues(new Uint32Array(1))[0] % eligible.length
     const winner = eligible[idx]
 
-    // Slot-reel cadence: most ticks fly by fast (a blur), then the delay ramps
-    // up steeply over the last few for a suspenseful slow-down before it lands.
-    // easeInQuint keeps the curve flat early and spikes late; total ≈ 7.5s for
-    // a longer, more suspenseful reveal.
-    const totalTicks = 46
-    const minDelay = 30
-    const maxDelay = 900
+    // Slot-reel cadence: names blur past fast early, then the delay ramps up
+    // steeply over the final ticks for a long, suspenseful slow-down before it
+    // lands. easeInQuint keeps the curve flat early and spikes late; the tuning
+    // below totals ≈ 22s so it plays well on stream.
+    const totalTicks = 64
+    const minDelay = 28
+    const maxDelay = 1900
     const easeInQuint = p => p * p * p * p * p
 
     let ticks = 0
@@ -3525,14 +3526,18 @@ function GiveawayPool({ channel, label, streamLink }) {
         setSpinning(false)
         setPendingWinner(winner)
         setCelebrate(true)
+        setReel([])
         return
       }
       // Never flash the actual winner mid-spin — in a tiny pool that would spoil
       // the reveal — so nudge off it if the random pick lands on the winner.
       let pickIdx = Math.floor(Math.random() * eligible.length)
       if (eligible.length > 1 && eligible[pickIdx].id === winner.id) pickIdx = (pickIdx + 1) % eligible.length
-      setDisplay(eligible[pickIdx])
-      setSpinNonce(n => n + 1)
+      const pick = eligible[pickIdx]
+      setDisplay(pick)
+      // Keep a short rolling window of recent names so the stage reads as a live
+      // list scrolling by, not a single flickering label.
+      setReel(prev => [...prev, { key: `${ticks}-${pick.id}`, code: pick.code, name: pick.name }].slice(-6))
       const delay = minDelay + (maxDelay - minDelay) * easeInQuint(ticks / totalTicks)
       timerRef.current = setTimeout(tick, delay)
     }
@@ -3610,24 +3615,34 @@ function GiveawayPool({ channel, label, streamLink }) {
             ))}
           </div>
         )}
-        {display ? (
-          spinning ? (
-            <motion.div key={spinNonce} className="draw-stage-content draw-stage-content--spin"
-              initial={{ y: '60%', opacity: 0 }}
-              animate={{ y: '0%', opacity: 1 }}
-              transition={{ duration: .11, ease: 'easeOut' }}>
-              <div className="draw-stage-name">{display.name}</div>
-              <div className="draw-stage-code">Ticket {display.code}</div>
-            </motion.div>
-          ) : (
-            <motion.div className="draw-stage-content"
-              initial={{ scale: 1.5, opacity: 0, rotate: -3 }}
-              animate={{ scale: 1, opacity: 1, rotate: 0 }}
-              transition={{ type: 'spring', stiffness: 420, damping: 13, mass: .7 }}>
-              <div className="draw-stage-name">{display.name}</div>
-              <div className="draw-stage-code">Ticket {display.code}</div>
-            </motion.div>
-          )
+        {spinning ? (
+          <div className="draw-reel" aria-hidden="true">
+            <AnimatePresence initial={false} mode="popLayout">
+              {reel.map((r, i) => {
+                const depth = reel.length - 1 - i   // 0 = current (bottom), higher = older/up
+                const active = depth === 0
+                return (
+                  <motion.div key={r.key} layout
+                    className={`draw-reel-row ${active ? 'is-active' : ''}`}
+                    initial={{ opacity: 0, y: 28, filter: 'blur(3px)' }}
+                    animate={{ opacity: active ? 1 : Math.max(.12, .5 - depth * .12), y: 0, filter: active ? 'blur(0px)' : 'blur(1px)' }}
+                    exit={{ opacity: 0, y: -24 }}
+                    transition={{ duration: .16, ease: 'easeOut' }}>
+                    <span className="draw-reel-code">{r.code}</span>
+                    <span className="draw-reel-name">{r.name}</span>
+                  </motion.div>
+                )
+              })}
+            </AnimatePresence>
+          </div>
+        ) : display ? (
+          <motion.div className="draw-stage-content"
+            initial={{ scale: 1.5, opacity: 0, rotate: -3 }}
+            animate={{ scale: 1, opacity: 1, rotate: 0 }}
+            transition={{ type: 'spring', stiffness: 420, damping: 13, mass: .7 }}>
+            <div className="draw-stage-code">Ticket {display.code}</div>
+            <div className="draw-stage-name">{display.name}</div>
+          </motion.div>
         ) : (
           <div className="draw-stage-empty">Spin to draw a winner</div>
         )}

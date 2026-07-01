@@ -1716,6 +1716,20 @@ select:focus { outline: none; border-color: var(--brand); }
 .giveaway-pool-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .6rem; margin-bottom: .4rem; }
 .giveaway-stats { display: flex; gap: .5rem; flex-wrap: wrap; }
 
+/* Winners-to-draw selector — how many cars this pool hands out in one run. */
+.draw-target { display: flex; align-items: center; gap: .7rem; flex-wrap: wrap; margin: .2rem 0 .1rem; }
+.draw-target-label { font-family: var(--mono); font-size: .68rem; letter-spacing: .12em; text-transform: uppercase; color: var(--t3); }
+.draw-target-opts { display: flex; gap: .35rem; }
+.draw-target-opt {
+  min-width: 2rem; padding: .35rem .5rem; border-radius: 8px;
+  font-family: var(--mono); font-size: .85rem; font-weight: 600;
+  color: var(--t2); background: var(--carbon); border: 1px solid var(--border-2);
+  cursor: pointer; transition: border-color .15s ease, color .15s ease, background .15s ease;
+}
+.draw-target-opt:hover:not(:disabled) { color: var(--t1); border-color: var(--chrome); }
+.draw-target-opt.is-on { color: #fff; background: var(--brand); border-color: var(--brand); }
+.draw-target-opt:disabled { opacity: .3; cursor: not-allowed; }
+
 /* ─── Lucky-draw stage (stream-ready spin + reveal) ───────────── */
 .draw-stage {
   position: relative; overflow: hidden;

@@ -3497,8 +3497,11 @@ function GiveawayPool({ channel, label, streamLink }) {
   const winners   = useMemo(() => tickets.filter(t => t.won).sort((a, b) => (b.wonAt?.seconds ?? 0) - (a.wonAt?.seconds ?? 0)), [tickets])
   const wonNames  = useMemo(() => new Set(winners.map(w => w.name)), [winners])
   const eligible  = useMemo(() => tickets.filter(t => !t.won && !wonNames.has(t.name)), [tickets, wonNames])
-  const cap       = CARS_PER_CHANNEL[channel]
-  const slotsLeft = cap - winners.length
+  // How many winners to draw this session — operator-selectable (1–8). Seeded
+  // from the planned cars-per-channel but no longer locked to it, so a single
+  // pool can hand out several cars in one run.
+  const [target, setTarget] = useState(CARS_PER_CHANNEL[channel] || 1)
+  const slotsLeft = target - winners.length
 
   const spin = () => {
     if (spinning || eligible.length === 0 || slotsLeft <= 0) return
@@ -3595,8 +3598,25 @@ function GiveawayPool({ channel, label, streamLink }) {
       </div>
       <div className="giveaway-stats">
         <span className="status status--accepted">{eligible.length} eligible</span>
-        <span className={`status status--${slotsLeft > 0 ? 'new' : 'done'}`}>{winners.length} / {cap} drawn</span>
+        <span className={`status status--${slotsLeft > 0 ? 'new' : 'done'}`}>{winners.length} / {target} drawn</span>
       </div>
+
+      {!spinning && !pendingWinner && (
+        <div className="draw-target">
+          <span className="draw-target-label">Winners to draw</span>
+          <div className="draw-target-opts">
+            {[1, 2, 3, 4, 5, 6, 7, 8].map(n => (
+              <button key={n} type="button"
+                className={`draw-target-opt ${target === n ? 'is-on' : ''}`}
+                onClick={() => setTarget(n)}
+                disabled={n < winners.length}
+                title={n < winners.length ? `${winners.length} already drawn` : `Draw ${n} winner${n > 1 ? 's' : ''}`}>
+                {n}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className={`draw-stage ${spinning ? 'is-spinning' : ''} ${celebrate ? 'is-celebrating' : ''}`}>
         <div className="draw-stage-glow" aria-hidden="true"/>
@@ -3650,9 +3670,17 @@ function GiveawayPool({ channel, label, streamLink }) {
 
       <div className="form-foot">
         {!pendingWinner ? (
-          <button className="btn btn--primary btn--lg" onClick={spin} disabled={spinning || eligible.length === 0 || slotsLeft <= 0}>
-            {slotsLeft <= 0 ? 'All cars assigned' : spinning ? 'Spinning…' : `Spin for Car #${winners.length + 1}`}
-          </button>
+          slotsLeft > 0 ? (
+            <button className="btn btn--primary btn--lg" onClick={spin} disabled={spinning || eligible.length === 0}>
+              {spinning ? 'Spinning…' : eligible.length === 0 ? 'No one left to draw' : `Spin for Car #${winners.length + 1}`}
+            </button>
+          ) : (
+            // Target reached — never a dead end: one tap raises the target so the
+            // operator can keep drawing more winners from the same pool.
+            <button className="btn btn--primary btn--lg" onClick={() => setTarget(t => t + 1)} disabled={eligible.length === 0}>
+              {eligible.length === 0 ? 'No one left to draw' : '+ Draw another winner'}
+            </button>
+          )
         ) : (
           <>
             <button className="btn btn--primary btn--lg" onClick={confirmWinner} disabled={busy}>Confirm {pendingWinner.name} →</button>
@@ -3733,7 +3761,6 @@ function AdminGiveaway() {
   const winners = useMemo(() =>
     allTickets.filter(t => t.won).sort((a, b) => (b.wonAt?.seconds ?? 0) - (a.wonAt?.seconds ?? 0)),
     [allTickets])
-  const totalCars = CARS_PER_CHANNEL.repair + CARS_PER_CHANNEL.food + CARS_PER_CHANNEL.membership
 
   const copyWinners = () => {
     const text = winners.map(w => `${w.wonPrize} — ${w.name} (ticket ${w.code}, ${channelDrawLabel(w.channel)})`).join('\n')
@@ -3777,7 +3804,7 @@ function AdminGiveaway() {
         <GiveawayPool channel="membership" label="Membership Lucky Draw" streamLink="/membership-draw"/>
       </div>
 
-      <div className="log-list-h">All winners · {winners.length} / {totalCars}</div>
+      <div className="log-list-h">All winners · {winners.length}</div>
       <div className="form-foot" style={{marginBottom: '1rem'}}>
         <button className="btn btn--ghost btn--sm" onClick={copyWinners} disabled={winners.length === 0}>Copy winners list</button>
         <button className="btn btn--ghost btn--sm" onClick={exportCSV} disabled={allTickets.length === 0}>Export all tickets (CSV backup)</button>

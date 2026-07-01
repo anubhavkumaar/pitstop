@@ -142,11 +142,14 @@ service cloud.firestore {
       allow delete: if isManagementOnly();
     }
 
-    // Audit trail for giveaway entries (created / edited / removed). Written
-    // by whoever performs the action; only management can ever read it back.
-    // Immutable — no update or delete, by anyone, ever.
+    // Audit trail for giveaway entries (created / edited / removed). Written by
+    // whoever performs the action — that includes the ticket-issuing roles
+    // ('bennys', 'soochi', 'membership'), who aren't isStaff() but still need to
+    // log their own issuances, or the entry silently never appears in the log.
+    // Only management can ever read it back. Immutable — no update/delete, ever.
     match /bennys_audit_log/{doc} {
-      allow create: if isStaff();
+      allow create: if isStaff()
+        || (signedIn() && userRole() in ['bennys', 'soochi', 'membership']);
       allow read:   if isManagementOnly();
       allow update, delete: if false;
     }

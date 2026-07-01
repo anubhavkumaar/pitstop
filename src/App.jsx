@@ -154,7 +154,7 @@ function useRoster() {
 // Issues one Benny's-giveaway ticket: a short, collision-checked code plus
 // the Firestore doc. One doc per ticket (buying twice = two docs) so ticket
 // weight in the draw falls out naturally — no separate count field needed.
-async function issueGiveawayToken({ channel, name, note, issuer }) {
+async function issueGiveawayToken({ channel, name, citizenId, note, issuer }) {
   for (let attempt = 0; attempt < 6; attempt++) {
     const n = 1000 + (crypto.getRandomValues(new Uint32Array(1))[0] % 9000)
     const code = `${CHANNEL_PREFIX[channel] || 'X'}-${n}`
@@ -162,7 +162,7 @@ async function issueGiveawayToken({ channel, name, note, issuer }) {
     if (!dupe.empty) continue
     const issuedByLabel = issuer?.email || 'unknown'
     await addDoc(collection(db, 'bennys_tokens'), {
-      code, channel, name: name.trim(), note: (note || '').trim(),
+      code, channel, name: name.trim(), citizenId: (citizenId || '').trim(), note: (note || '').trim(),
       issuedByUid:   issuer?.uid   || null,
       issuedByLabel,
       createdAt: serverTimestamp(),
@@ -171,7 +171,7 @@ async function issueGiveawayToken({ channel, name, note, issuer }) {
     // Fire-and-forget backup to Google Sheets (only from the /bennys and
     // /soochi issuance flow — see AdminSettings for the "only writer" intent).
     // No-op until an admin configures pitstop_secrets/sheets.
-    postToSheets({ type: 'ticket', code, channel, name: name.trim(), note: (note || '').trim(), issuedByLabel })
+    postToSheets({ type: 'ticket', code, channel, name: name.trim(), citizenId: (citizenId || '').trim(), note: (note || '').trim(), issuedByLabel })
     logAudit({ action: 'created', code, channel, name: name.trim(), actor: issuer })
     return code
   }
@@ -220,6 +220,15 @@ function toCSV(rows, headers) {
   return lines.join('\n')
 }
 
+// Full date + time stamp (IST) for any Firestore timestamp — shared by the
+// giveaway ticket tables, the winners list, and the audit log so every entry
+// reads the same. Returns '—' for docs whose serverTimestamp hasn't resolved.
+function fmtStamp(ts) {
+  return ts?.toDate
+    ? ts.toDate().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' }) + ' IST'
+    : '—'
+}
+
 function downloadCSV(filename, csv) {
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
   const url = URL.createObjectURL(blob)
@@ -234,6 +243,118 @@ const fadeUp = {
   whileInView: { opacity: 1, y: 0 },
   viewport: { once: true, margin: '-60px' },
   transition: { duration: .55, ease: [0.22, 1, 0.36, 1] },
+}
+
+/* ─── Modal + toast system (replaces native alert / confirm) ─── */
+
+// Tiny external store so any handler — even outside a React component — can pop
+// a styled confirm dialog or a toast without threading context through props.
+const uiStore = {
+  confirm: null,          // { title, message, confirmLabel, cancelLabel, danger, resolve } | null
+  toasts: [],             // [{ id, message, type }]
+  listeners: new Set(),
+  emit() { this.listeners.forEach(l => l()) },
+  subscribe(l) { this.listeners.add(l); return () => this.listeners.delete(l) },
+}
+
+// Promise-based confirm: `if (await showConfirm({…})) …`. Accepts a plain string
+// for quick cases, or an options object for a title / danger styling / labels.
+function showConfirm(opts) {
+  const o = typeof opts === 'string' ? { message: opts } : (opts || {})
+  return new Promise(resolve => {
+    uiStore.confirm = {
+      title:        o.title        || 'Are you sure?',
+      message:      o.message      || '',
+      confirmLabel: o.confirmLabel || 'Confirm',
+      cancelLabel:  o.cancelLabel  || 'Cancel',
+      danger:       !!o.danger,
+      resolve,
+    }
+    uiStore.emit()
+  })
+}
+
+let toastSeq = 0
+// Non-blocking toast (replaces alert). type: 'ok' | 'err' | 'info'.
+function showToast(message, type = 'info') {
+  const id = ++toastSeq
+  uiStore.toasts = [...uiStore.toasts, { id, message, type }]
+  uiStore.emit()
+  setTimeout(() => {
+    uiStore.toasts = uiStore.toasts.filter(t => t.id !== id)
+    uiStore.emit()
+  }, type === 'err' ? 6000 : 4000)
+}
+
+function useUiStore() {
+  const [, setTick] = useState(0)
+  useEffect(() => uiStore.subscribe(() => setTick(t => t + 1)), [])
+  return uiStore
+}
+
+// Renders whatever the store currently holds — one confirm dialog at a time
+// plus a stack of toasts. Mounted once at the app root.
+function ModalHost() {
+  const store = useUiStore()
+  const { confirm, toasts } = store
+
+  const resolveConfirm = result => {
+    const c = store.confirm
+    store.confirm = null
+    store.emit()
+    c?.resolve(result)
+  }
+  const dismissToast = id => { store.toasts = store.toasts.filter(t => t.id !== id); store.emit() }
+
+  useEffect(() => {
+    if (!confirm) return
+    const onKey = e => {
+      if (e.key === 'Escape') resolveConfirm(false)
+      if (e.key === 'Enter')  resolveConfirm(true)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [confirm])   // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <>
+      <AnimatePresence>
+        {confirm && (
+          <motion.div className="modal-overlay"
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            transition={{ duration: .18 }}
+            onClick={() => resolveConfirm(false)}>
+            <motion.div className="modal-card" role="dialog" aria-modal="true"
+              initial={{ opacity: 0, y: 16, scale: .96 }} animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 8, scale: .97 }}
+              transition={{ duration: .22, ease: [0.22, 1, 0.36, 1] }}
+              onClick={e => e.stopPropagation()}>
+              <div className="modal-title">{confirm.title}</div>
+              {confirm.message && <p className="modal-message">{confirm.message}</p>}
+              <div className="modal-actions">
+                <button className="btn btn--ghost" onClick={() => resolveConfirm(false)}>{confirm.cancelLabel}</button>
+                <button className={`btn ${confirm.danger ? 'btn--del' : 'btn--primary'}`}
+                  onClick={() => resolveConfirm(true)} autoFocus>{confirm.confirmLabel}</button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      <div className="toast-stack" aria-live="polite">
+        <AnimatePresence>
+          {toasts.map(t => (
+            <motion.div key={t.id} className={`toast toast--${t.type}`}
+              initial={{ opacity: 0, y: 14, scale: .96 }} animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, x: 40 }} transition={{ duration: .24, ease: [0.22, 1, 0.36, 1] }}
+              onClick={() => dismissToast(t.id)}>
+              {t.message}
+            </motion.div>
+          ))}
+        </AnimatePresence>
+      </div>
+    </>
+  )
 }
 
 /* ─── Shared chrome ────────────────────────────────────────── */
@@ -1450,9 +1571,9 @@ function WorkLogPage() {
   }, [logs, filter])
 
   const remove = async log => {
-    if (!confirm(`Delete the log for ${log.clientName || 'this customer'}? This cannot be undone.`)) return
+    if (!(await showConfirm({ title: 'Delete work log?', message: `Delete the log for ${log.clientName || 'this customer'}? This cannot be undone.`, confirmLabel: 'Delete', danger: true }))) return
     try { await deleteDoc(doc(db, 'pitstop_logs', log.id)) }
-    catch (err) { alert('Delete failed: ' + (err.message || err.code || 'unknown error')) }
+    catch (err) { showToast('Delete failed: ' + (err.message || err.code || 'unknown error'), 'err') }
   }
 
   const toggleSelect = id => setSelected(prev => {
@@ -1590,7 +1711,7 @@ function LogCard({ log, index, onView, canEdit, onEdit, onDelete, billMode, isSe
     if (paidToggling) return
     setPaidToggling(true)
     try { await updateDoc(doc(db, 'pitstop_logs', log.id), { paid: !log.paid }) }
-    catch (err) { alert('Failed to update paid status: ' + (err.message || err.code)) }
+    catch (err) { showToast('Failed to update paid status: ' + (err.message || err.code), 'err') }
     finally { setPaidToggling(false) }
   }
 
@@ -1999,9 +2120,9 @@ function GalleryPage() {
   }, [])
 
   const remove = async id => {
-    if (!confirm('Remove this photo from the gallery?')) return
+    if (!(await showConfirm({ title: 'Remove photo?', message: 'Remove this photo from the gallery?', confirmLabel: 'Remove', danger: true }))) return
     try { await deleteDoc(doc(db, 'pitstop_gallery', id)) }
-    catch (err) { alert('Delete failed: ' + (err.message || err.code)) }
+    catch (err) { showToast('Delete failed: ' + (err.message || err.code), 'err') }
   }
 
   const gallery = photos.map(p => ({ url: p.url, label: p.caption || 'Photo' }))
@@ -2574,12 +2695,12 @@ function StaffReviews() {
 
   const setApproved = async (id, approved) => {
     try { await updateDoc(doc(db, 'pitstop_reviews', id), { approved }) }
-    catch (err) { alert('Update failed: ' + (err.message || err.code)) }
+    catch (err) { showToast('Update failed: ' + (err.message || err.code), 'err') }
   }
   const remove = async id => {
-    if (!confirm('Delete this review?')) return
+    if (!(await showConfirm({ title: 'Delete review?', message: 'Delete this review?', confirmLabel: 'Delete', danger: true }))) return
     try { await deleteDoc(doc(db, 'pitstop_reviews', id)) }
-    catch (err) { alert('Delete failed: ' + (err.message || err.code)) }
+    catch (err) { showToast('Delete failed: ' + (err.message || err.code), 'err') }
   }
 
   return (
@@ -2697,35 +2818,35 @@ function GiveawayIssuePage({ channel, canIssue, kicker, deniedLabel, title, sub,
 
 function TicketTable({ tickets, showNote, noteLabel, user, role }) {
   const [editingId, setEditingId] = useState(null)
-  const [draft, setDraft] = useState({ name: '', note: '' })
+  const [draft, setDraft] = useState({ name: '', citizenId: '', note: '' })
   const [busyId, setBusyId] = useState(null)
   const canManage = canManageEntries(user, role)
-  const cols = showNote ? 5 : 4
+  const cols = showNote ? 6 : 5
 
-  const startEdit = t => { setEditingId(t.id); setDraft({ name: t.name || '', note: t.note || '' }) }
+  const startEdit = t => { setEditingId(t.id); setDraft({ name: t.name || '', citizenId: t.citizenId || '', note: t.note || '' }) }
   const cancelEdit = () => setEditingId(null)
 
   const saveEdit = async t => {
     if (!draft.name.trim()) return
     setBusyId(t.id)
     try {
-      const after = { name: draft.name.trim(), note: draft.note.trim() }
+      const after = { name: draft.name.trim(), citizenId: draft.citizenId.trim(), note: draft.note.trim() }
       await updateDoc(doc(db, 'bennys_tokens', t.id), after)
-      logAudit({ action: 'edited', code: t.code, channel: t.channel, name: after.name, before: { name: t.name, note: t.note || '' }, after, actor: user })
+      logAudit({ action: 'edited', code: t.code, channel: t.channel, name: after.name, before: { name: t.name, citizenId: t.citizenId || '', note: t.note || '' }, after, actor: user })
       setEditingId(null)
     } catch (err) {
-      alert('Could not save: ' + (err.message || err.code))
+      showToast('Could not save: ' + (err.message || err.code), 'err')
     } finally { setBusyId(null) }
   }
 
   const deleteTicket = async t => {
-    if (!confirm(`Delete ticket ${t.code} (${t.name})? This removes it from the pool entirely.`)) return
+    if (!(await showConfirm({ title: 'Delete ticket?', message: `Delete ticket ${t.code} (${t.name})? This removes it from the pool entirely.`, confirmLabel: 'Delete', danger: true }))) return
     setBusyId(t.id)
     try {
       await deleteDoc(doc(db, 'bennys_tokens', t.id))
-      logAudit({ action: 'removed', code: t.code, channel: t.channel, name: t.name, before: { name: t.name, note: t.note || '' }, actor: user })
+      logAudit({ action: 'removed', code: t.code, channel: t.channel, name: t.name, before: { name: t.name, citizenId: t.citizenId || '', note: t.note || '' }, actor: user })
     }
-    catch (err) { alert('Could not delete: ' + (err.message || err.code)) }
+    catch (err) { showToast('Could not delete: ' + (err.message || err.code), 'err') }
     finally { setBusyId(null) }
   }
 
@@ -2737,8 +2858,9 @@ function TicketTable({ tickets, showNote, noteLabel, user, role }) {
             <th>#</th>
             <th>Code</th>
             <th>Name</th>
+            <th>Citizen ID</th>
             {showNote && <th>{noteLabel || 'Note'}</th>}
-            <th>Time</th>
+            <th>Date &amp; time</th>
             {canManage && <th>Manage</th>}
           </tr>
         </thead>
@@ -2753,15 +2875,17 @@ function TicketTable({ tickets, showNote, noteLabel, user, role }) {
               {editingId === t.id ? (
                 <>
                   <td><input className="ticket-table-input" value={draft.name} onChange={e => setDraft({...draft, name: e.target.value})}/></td>
+                  <td><input className="ticket-table-input" value={draft.citizenId} onChange={e => setDraft({...draft, citizenId: e.target.value})}/></td>
                   {showNote && <td><input className="ticket-table-input" value={draft.note} onChange={e => setDraft({...draft, note: e.target.value})}/></td>}
                 </>
               ) : (
                 <>
                   <td>{t.name}</td>
+                  <td>{t.citizenId || '—'}</td>
                   {showNote && <td>{t.note || '—'}</td>}
                 </>
               )}
-              <td>{t.createdAt?.toDate ? t.createdAt.toDate().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '—'}</td>
+              <td className="ticket-table-time">{fmtStamp(t.createdAt)}</td>
               {canManage && (
                 <td className="ticket-table-actions">
                   {editingId === t.id ? (
@@ -2789,6 +2913,7 @@ function TicketTable({ tickets, showNote, noteLabel, user, role }) {
 
 function TokenIssuer({ user, role, channel, kicker, title, sub, nameLabel, namePlaceholder, showNote, noteLabel, notePlaceholder, showQuantity }) {
   const [name, setName] = useState('')
+  const [citizenId, setCitizenId] = useState('')
   const [note, setNote] = useState('')
   const [quantity, setQuantity] = useState(1)
   const [status, setStatus] = useState({ state: 'idle', msg: '' })
@@ -2812,16 +2937,17 @@ function TokenIssuer({ user, role, channel, kicker, title, sub, nameLabel, nameP
   const issue = async e => {
     e.preventDefault()
     if (!name.trim()) { setStatus({ state: 'err', msg: 'Enter a name first.' }); return }
+    if (!citizenId.trim()) { setStatus({ state: 'err', msg: 'Enter a Citizen ID.' }); return }
     const qty = showQuantity ? Math.max(1, Math.min(50, +quantity || 1)) : 1
     setStatus({ state: 'sending', msg: '' })
     try {
       const codes = []
       for (let i = 0; i < qty; i++) {
-        codes.push(await issueGiveawayToken({ channel, name, note, issuer: user }))
+        codes.push(await issueGiveawayToken({ channel, name, citizenId, note, issuer: user }))
       }
       setLastCodes(codes)
       setStatus({ state: 'ok', msg: '' })
-      setName(''); setNote(''); setQuantity(1)
+      setName(''); setCitizenId(''); setNote(''); setQuantity(1)
       nameRef.current?.focus()
     } catch (err) {
       setStatus({ state: 'err', msg: err.message || 'Could not issue token.' })
@@ -2848,6 +2974,10 @@ function TokenIssuer({ user, role, channel, kicker, title, sub, nameLabel, nameP
               </label>
             )}
           </div>
+          <label className="field">
+            <span>Citizen ID</span>
+            <input value={citizenId} onChange={e => setCitizenId(e.target.value)} placeholder="e.g. 1234"/>
+          </label>
           {showNote && (
             <label className="field">
               <span>{noteLabel}</span>
@@ -3109,7 +3239,7 @@ function AdminSettings() {
   }
 
   const clear = async () => {
-    if (!confirm('Remove the vgy.me token? Image uploads will fall back to Firebase Storage.')) return
+    if (!(await showConfirm({ title: 'Remove vgy.me token?', message: 'Image uploads will fall back to Firebase Storage.', confirmLabel: 'Remove token', danger: true }))) return
     try {
       await setDoc(doc(db, 'pitstop_secrets', 'vgy'), { token: '', updatedAt: serverTimestamp() })
       setStatus({ state: 'ok', msg: 'Token removed.' })
@@ -3150,7 +3280,7 @@ function AdminSettings() {
   }
 
   const clearSheets = async () => {
-    if (!confirm('Stop backing up to Google Sheets?')) return
+    if (!(await showConfirm({ title: 'Stop Google Sheets backup?', message: 'New tickets will no longer be mirrored to your Google Sheet.', confirmLabel: 'Stop backup', danger: true }))) return
     try {
       await setDoc(doc(db, 'pitstop_secrets', 'sheets'), { url: '', updatedAt: serverTimestamp() })
       setSheetsStatus({ state: 'ok', msg: 'Backup disabled.' })
@@ -3266,10 +3396,10 @@ function AdminRoster() {
     setDraft({ name: '', role: 'Crew', bio: '', avatar: '', hue: 48, order: 100 })
   }
   const update = async (id, patch) => updateDoc(doc(db, 'pitstop_roster', id), patch)
-  const remove = async id => { if (confirm('Remove this crew member?')) await deleteDoc(doc(db, 'pitstop_roster', id)) }
+  const remove = async id => { if (await showConfirm({ title: 'Remove crew member?', message: 'This removes them from the public roster.', confirmLabel: 'Remove', danger: true })) await deleteDoc(doc(db, 'pitstop_roster', id)) }
 
   const seedDefaults = async () => {
-    if (!confirm('Seed the roster with the core members? Existing entries with the same IDs will be overwritten, others stay.')) return
+    if (!(await showConfirm({ title: 'Seed roster?', message: 'Seed the roster with the core members? Existing entries with the same IDs will be overwritten, others stay.', confirmLabel: 'Seed defaults' }))) return
     for (let i = 0; i < TEAM_SEED.length; i++) {
       const m = TEAM_SEED[i]
       await setDoc(doc(db, 'pitstop_roster', m.id), { ...m, order: (i + 1) * 10 })
@@ -3277,8 +3407,8 @@ function AdminRoster() {
   }
 
   const wipeAndReseed = async () => {
-    if (!confirm('Delete ALL roster entries and replace with the current seed?\n\nThis cannot be undone.')) return
-    if (!confirm('Are you sure? Every crew member doc will be removed first, then the 5-member seed will be written.')) return
+    if (!(await showConfirm({ title: 'Wipe & reseed roster?', message: 'Delete ALL roster entries and replace with the current seed? This cannot be undone.', confirmLabel: 'Continue', danger: true }))) return
+    if (!(await showConfirm({ title: 'Really wipe everything?', message: 'Every crew member doc will be removed first, then the 5-member seed will be written.', confirmLabel: 'Wipe & reseed', danger: true }))) return
     const snap = await getDocs(collection(db, 'pitstop_roster'))
     for (const d of snap.docs) {
       await deleteDoc(doc(db, 'pitstop_roster', d.id))
@@ -3380,11 +3510,12 @@ function GiveawayPool({ channel, label, streamLink }) {
 
     // Slot-reel cadence: most ticks fly by fast (a blur), then the delay ramps
     // up steeply over the last few for a suspenseful slow-down before it lands.
-    // easeInQuart keeps the curve flat early and spikes late; total ≈ 4s.
-    const totalTicks = 30
-    const minDelay = 34
-    const maxDelay = 560
-    const easeInQuart = p => p * p * p * p
+    // easeInQuint keeps the curve flat early and spikes late; total ≈ 7.5s for
+    // a longer, more suspenseful reveal.
+    const totalTicks = 46
+    const minDelay = 30
+    const maxDelay = 900
+    const easeInQuint = p => p * p * p * p * p
 
     let ticks = 0
     const tick = () => {
@@ -3402,7 +3533,7 @@ function GiveawayPool({ channel, label, streamLink }) {
       if (eligible.length > 1 && eligible[pickIdx].id === winner.id) pickIdx = (pickIdx + 1) % eligible.length
       setDisplay(eligible[pickIdx])
       setSpinNonce(n => n + 1)
-      const delay = minDelay + (maxDelay - minDelay) * easeInQuart(ticks / totalTicks)
+      const delay = minDelay + (maxDelay - minDelay) * easeInQuint(ticks / totalTicks)
       timerRef.current = setTimeout(tick, delay)
     }
     tick()
@@ -3419,7 +3550,7 @@ function GiveawayPool({ channel, label, streamLink }) {
       })
       setPendingWinner(null); setDisplay(null); setCelebrate(false)
     } catch (err) {
-      alert('Could not confirm winner: ' + (err.message || err.code))
+      showToast('Could not confirm winner: ' + (err.message || err.code), 'err')
     } finally { setBusy(false) }
   }
 
@@ -3428,11 +3559,27 @@ function GiveawayPool({ channel, label, streamLink }) {
   const undoLast = async () => {
     const last = winners[0]
     if (!last) return
-    if (!confirm(`Undo ${last.name}'s win (${last.wonPrize})? They'll go back in the pool.`)) return
+    if (!(await showConfirm({ title: 'Undo last win?', message: `Undo ${last.name}'s win (${last.wonPrize})? They'll go back in the pool.`, confirmLabel: 'Undo win', danger: true }))) return
     setBusy(true)
     try { await updateDoc(doc(db, 'bennys_tokens', last.id), { won: false, wonPrize: null, wonAt: null }) }
-    catch (err) { alert('Could not undo: ' + (err.message || err.code)) }
+    catch (err) { showToast('Could not undo: ' + (err.message || err.code), 'err') }
     finally { setBusy(false) }
+  }
+
+  // Clears every confirmed winner for this channel and sends all tickets back
+  // into the pool — so a practice/example spin doesn't lock the real draw.
+  const resetPool = async () => {
+    if (winners.length === 0) return
+    if (!(await showConfirm({ title: `Reset ${label}?`, message: `This clears ${winners.length} confirmed winner(s) and sends every ticket back into the pool.`, confirmLabel: 'Reset draws', danger: true }))) return
+    setBusy(true)
+    try {
+      await Promise.all(winners.map(w =>
+        updateDoc(doc(db, 'bennys_tokens', w.id), { won: false, wonPrize: null, wonAt: null })))
+      setPendingWinner(null); setDisplay(null); setCelebrate(false)
+      showToast(`${label} reset — all tickets back in the pool.`, 'ok')
+    } catch (err) {
+      showToast('Could not reset: ' + (err.message || err.code), 'err')
+    } finally { setBusy(false) }
   }
 
   return (
@@ -3498,7 +3645,10 @@ function GiveawayPool({ channel, label, streamLink }) {
           </>
         )}
         {winners.length > 0 && !pendingWinner && (
-          <button className="btn btn--ghost btn--sm" onClick={undoLast} disabled={busy}>Undo last win</button>
+          <>
+            <button className="btn btn--ghost btn--sm" onClick={undoLast} disabled={busy}>Undo last win</button>
+            <button className="btn btn--del btn--sm" onClick={resetPool} disabled={busy}>Reset all draws</button>
+          </>
         )}
       </div>
     </div>
@@ -3521,10 +3671,6 @@ function AdminAuditLog() {
     return unsub
   }, [])
 
-  const fmtIST = ts => ts?.toDate
-    ? ts.toDate().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'medium' }) + ' IST'
-    : '—'
-
   const actionStatus = a => a === 'created' ? 'accepted' : a === 'removed' ? 'cancelled' : 'new'
 
   return (
@@ -3543,7 +3689,7 @@ function AdminAuditLog() {
           {logs.length === 0 && <tr><td colSpan={5} className="empty">No activity logged yet.</td></tr>}
           {logs.map(l => (
             <tr key={l.id}>
-              <td>{fmtIST(l.createdAt)}</td>
+              <td>{fmtStamp(l.createdAt)}</td>
               <td><span className={`status status--${actionStatus(l.action)}`}>{l.action}</span></td>
               <td className="ticket-table-code">{l.code}</td>
               <td>{l.name}</td>
@@ -3585,12 +3731,12 @@ function AdminGiveaway() {
   // this anytime during the event — e.g. after every confirmed winner — and
   // you've got an offline copy independent of Firestore.
   const exportCSV = () => {
-    const headers = ['code', 'channel', 'name', 'note', 'issuedByLabel', 'createdAt', 'won', 'wonPrize']
+    const headers = ['code', 'channel', 'name', 'citizenId', 'note', 'issuedByLabel', 'createdAt', 'won', 'wonPrize']
     const rows = allTickets
       .slice()
       .sort((a, b) => (a.createdAt?.seconds ?? 0) - (b.createdAt?.seconds ?? 0))
       .map(t => ({
-        code: t.code, channel: t.channel, name: t.name, note: t.note || '',
+        code: t.code, channel: t.channel, name: t.name, citizenId: t.citizenId || '', note: t.note || '',
         issuedByLabel: t.issuedByLabel || '',
         createdAt: t.createdAt?.toDate ? t.createdAt.toDate().toLocaleString() : '',
         won: t.won ? 'yes' : 'no', wonPrize: t.wonPrize || '',
@@ -3601,10 +3747,10 @@ function AdminGiveaway() {
   // Deletes any drawn winner, not just the most recent one per channel (that's
   // GiveawayPool's "Undo last win"). Sends the ticket back into its pool.
   const deleteWinner = async w => {
-    if (!confirm(`Delete ${w.name}'s win (${w.wonPrize})? They'll go back into the pool.`)) return
+    if (!(await showConfirm({ title: 'Delete win?', message: `Delete ${w.name}'s win (${w.wonPrize})? They'll go back into the pool.`, confirmLabel: 'Delete win', danger: true }))) return
     setBusyId(w.id)
     try { await updateDoc(doc(db, 'bennys_tokens', w.id), { won: false, wonPrize: null, wonAt: null }) }
-    catch (err) { alert('Could not delete: ' + (err.message || err.code)) }
+    catch (err) { showToast('Could not delete: ' + (err.message || err.code), 'err') }
     finally { setBusyId(null) }
   }
 
@@ -3716,16 +3862,16 @@ function AdminUsers({ currentUser }) {
 
   const setRole = async (uid, role) => {
     try { await updateDoc(doc(db, 'pitstop_users', uid), { role }) }
-    catch (err) { alert('Update failed: ' + (err.message || err.code)) }
+    catch (err) { showToast('Update failed: ' + (err.message || err.code), 'err') }
   }
 
   const removeUser = async u => {
-    if (!confirm(`Remove ${u.email} from the user list?\n\nNote: this only removes their role doc — the Auth account itself stays until you delete it from Firebase Console → Authentication → Users.`)) return
+    if (!(await showConfirm({ title: `Remove ${u.email}?`, message: 'This only removes their role doc — the Auth account itself stays until you delete it from Firebase Console → Authentication → Users.', confirmLabel: 'Remove user', danger: true }))) return
     try {
       await deleteDoc(doc(db, 'pitstop_users', u.uid))
       await deleteDoc(doc(db, 'pitstop_user_secrets', u.uid)).catch(() => {})
     }
-    catch (err) { alert('Delete failed: ' + (err.message || err.code)) }
+    catch (err) { showToast('Delete failed: ' + (err.message || err.code), 'err') }
   }
 
   // Reset another account's password without a backend: sign into the secondary
@@ -3733,10 +3879,10 @@ function AdminUsers({ currentUser }) {
   // the new one. Only works for accounts that have a stored password.
   const setPassword = async u => {
     const newPass = (pwDrafts[u.uid] || '')
-    if (newPass.length < 6) { alert('Password must be at least 6 characters.'); return }
+    if (newPass.length < 6) { showToast('Password must be at least 6 characters.', 'err'); return }
     const storedPass = secretsMap[u.uid]
-    if (!storedPass) { alert("No stored password for this account, so it can't be reset here. Recreate the account, or have the user change it from their own login."); return }
-    if (!confirm(`Set a new password for ${u.email}? Anyone using that login will need the new password.`)) return
+    if (!storedPass) { showToast("No stored password for this account, so it can't be reset here. Recreate the account, or have the user change it from their own login.", 'err'); return }
+    if (!(await showConfirm({ title: `Reset password for ${u.email}?`, message: 'Anyone using that login will need the new password.', confirmLabel: 'Set password' }))) return
     setPwBusy(u.uid)
     try {
       await signInWithEmailAndPassword(secondaryAuth, u.email, storedPass)
@@ -3744,13 +3890,13 @@ function AdminUsers({ currentUser }) {
       await signOutSecondary(secondaryAuth).catch(() => {})
       await setDoc(doc(db, 'pitstop_user_secrets', u.uid), { password: newPass }, { merge: true })
       setPwDrafts(d => ({ ...d, [u.uid]: '' }))
-      alert(`Password updated for ${u.email}.`)
+      showToast(`Password updated for ${u.email}.`, 'ok')
     } catch (err) {
       // Stored password no longer matches Auth (e.g. changed elsewhere) → can't re-login.
       const msg = (err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential')
         ? 'Stored password is out of date for this account — reset it from the Firebase Console once, then it works here again.'
         : (err.message || err.code)
-      alert('Could not set password: ' + msg)
+      showToast('Could not set password: ' + msg, 'err')
     } finally { setPwBusy(null) }
   }
 
@@ -3885,6 +4031,7 @@ export default function App() {
   return (
     <Fragment>
       <ScrollToTop/>
+      <ModalHost/>
       {!isDrawPage && <Nav/>}
       <AnimatePresence mode="wait">
         <PageTransition key={loc.pathname}>

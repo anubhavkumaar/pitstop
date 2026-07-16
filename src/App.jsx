@@ -3097,7 +3097,8 @@ function EmsPage() {
 
 const MEMBERSHIP_DAYS = 14
 const DAY_MS = 24 * 60 * 60 * 1000
-const MEMBERSHIP_TYPES = ['Gold', 'Pink', 'Blue', 'PSM', 'PD', 'EMS']
+// Membership tiers. PSM is the PD/EMS tier — PD / EMS / PMS in logs all mean PSM.
+const MEMBERSHIP_TYPES = ['Gold', 'Pink', 'Blue', 'PSM']
 
 function membershipStart(m) {
   if (m.issuedAt?.toDate) return m.issuedAt.toDate().getTime()
@@ -3118,28 +3119,80 @@ function fmtDay(ms) {
   return ms == null ? '—' : new Date(ms).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' })
 }
 
+// Includes the aliases so a type keyword is still detected in free text; they
+// all collapse to a canonical MEMBERSHIP_TYPES value via normalizeMembershipType.
+const MEMBERSHIP_TYPE_RE = /\b(Gold|Pink|Blue|PSM|PMS|PD|EMS)\b/i
 function normalizeMembershipType(t) {
   if (!t) return ''
-  return MEMBERSHIP_TYPES.find(x => x.toUpperCase() === t.toUpperCase()) || ''
+  const up = t.toUpperCase().replace(/[^A-Z]/g, '')
+  if (up === 'PMS' || up === 'PD' || up === 'EMS') return 'PSM'   // PD/EMS tier == PSM
+  return MEMBERSHIP_TYPES.find(x => x.toUpperCase() === up) || ''
 }
-// Best-effort parser for bulk-pasted lines (e.g. copied from a Discord channel).
-// Pulls a name, a 1–6 digit Citizen ID, and an optional type keyword from each
-// line, tolerating leading "1." / "1)" numbering and trailing punctuation.
-const MEMBERSHIP_TYPE_RE = new RegExp(`\\b(${MEMBERSHIP_TYPES.join('|')})\\b`, 'i')
-function parseMembershipLines(text) {
-  const rows = []
-  for (const raw of (text || '').split('\n')) {
-    const line = raw.trim().replace(/^\d+[).]\s*/, '').replace(/^[-•*]\s*/, '')
-    if (!line) continue
-    const cid = line.match(/\b(\d{1,6})\b/)
-    if (!cid) continue
-    const typeM = line.match(MEMBERSHIP_TYPE_RE)
-    let name = line.slice(0, cid.index).trim().replace(/[,\-–—]\s*$/, '').trim()
-    if (typeM) name = name.replace(MEMBERSHIP_TYPE_RE, '').trim()
-    name = name.replace(/[(),\-–—]+$/, '').trim()
-    if (!name) continue
-    rows.push({ name, cid: cid[1], type: normalizeMembershipType(typeM ? typeM[1] : '') })
+function parseMembershipDate(s) {
+  s = (s || '').trim()
+  if (!s) return null
+  let m = s.match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/)             // DD/MM/YYYY
+  if (m) return new Date(+m[3], +m[2] - 1, +m[1], 12)
+  m = s.match(/(\d{1,2})\s+([A-Za-z]{3,})\s+(\d{4})/)          // "1 Jul 2026"
+  if (m) {
+    const mo = ['jan','feb','mar','apr','may','jun','jul','aug','sep','oct','nov','dec'].indexOf(m[2].slice(0, 3).toLowerCase())
+    if (mo >= 0) return new Date(+m[3], mo, +m[1], 12)
   }
+  return null
+}
+function cleanSeller(s) {
+  return (s || '')
+    .replace(/@/g, '').replace(/\[[^\]]*\]/g, '')             // drop @mentions, [BM] tags
+    .replace(/\s*\|.*$/, '')                                   // "Xavier | Alex" -> "Xavier"
+    .replace(/\barry sins\b/ig, '').replace(/\bpd\b/ig, '')    // stray dup / job token
+    .replace(/[,·]+/g, ' ').replace(/\s+/g, ' ').trim()
+}
+
+// Best-effort parser for a pasted membership log — handles the labeled blocks
+// used in #membership-logs (Customer/Costumer/Custumer Name, CID, Membership,
+// By/Seller, Date, in any order and with :/-/glued separators), the bare
+// "Name 1234 (JOB)" one-liners, and simple "Name CID Type" lines. Returns
+// { name, cid, type, seller, date } rows; the caller dedupes by Citizen ID.
+function parseMembershipLog(text) {
+  const rows = []
+  let cur = null
+  const flush = () => { if (cur && cur.name && cur.cid) rows.push(cur); cur = null }
+  const strip = s => (s || '').trim().replace(/^[:\-–—\s]+/, '').replace(/[:\-–—\s,]+$/, '').trim()
+  // A bare "Name 1234 (JOB) Type" line — but not a pricing row like "PINK 5500".
+  const bare = line => {
+    if (/^\d/.test(line)) return null
+    const b = line.match(/^([A-Za-z][A-Za-z.'’\- ]{1,40}?)\s+(\d{2,6})\b(.*)$/)
+    if (!b) return null
+    const name = strip(b[1])
+    if (!name || normalizeMembershipType(name)) return null   // skip type-only rows
+    // Drop "(PD)"/"(EMS)" job tags before reading a type — those are the
+    // customer's department, not the membership tier (which arrives on its own
+    // "Membership type:" line for these one-liners).
+    const rest = b[3].replace(/\([^)]*\)/g, ' ')
+    return { name, cid: b[2], type: normalizeMembershipType((rest.match(MEMBERSHIP_TYPE_RE) || [])[1] || ''), seller: '', date: null }
+  }
+
+  for (const raw of (text || '').split('\n')) {
+    const line = raw.trim()
+    if (!line) continue
+    // Discord author/timestamp header ("Name [BM],  — 7/2/2026 2:08 AM") — a boundary.
+    if (/—\s*(\d|yesterday|today)/i.test(line) && !/c[ou]st[ou]mer|custumer/i.test(line)) { flush(); continue }
+
+    if (/^(?:c[ou]st[ou]mer|custumer)\s*name/i.test(line)) {
+      flush()
+      cur = { name: strip(line.replace(/^(?:c[ou]st[ou]mer|custumer)\s*name/i, '')), cid: '', type: '', seller: '', date: null }
+      continue
+    }
+    let m
+    if (cur && (m = line.match(/\bcid\b\s*[:\-–—]*\s*(\d+)/i)))                       { cur.cid = cur.cid || m[1]; continue }
+    if (cur && (m = line.match(/^membership(?:\s*type)?\s*[:\-–—]*\s*([A-Za-z/]+)/i))) { cur.type = cur.type || normalizeMembershipType(m[1]); continue }
+    if (cur && (m = line.match(/^(?:seller\s*name|by)\b\s*[:\-–—]*\s*(.+)$/i)))       { cur.seller = cur.seller || cleanSeller(m[1]); continue }
+    if (cur && (m = line.match(/^date\b\s*[:\-–—]*\s*(.+)$/i)))                       { cur.date = cur.date || parseMembershipDate(m[1]); continue }
+
+    const b = bare(line)
+    if (b) { flush(); cur = b }
+  }
+  flush()
   return rows
 }
 
@@ -3204,7 +3257,7 @@ function MembershipsManager({ user, role, roster }) {
   const nameRef = useRef(null)
   const canManage = canManageEntries(user, role)
   const mechanics = roster.map(m => m.name)
-  const previewRows = parseMembershipLines(importText)
+  const previewRows = parseMembershipLog(importText)
 
   useEffect(() => {
     const unsub = onSnapshot(collection(db, 'pitstop_memberships'),
@@ -3267,20 +3320,23 @@ function MembershipsManager({ user, role, roster }) {
   // Bulk import from pasted text (e.g. copied out of a Discord channel). New
   // records start their 14 days from now; duplicates (by Citizen ID) are skipped.
   const doImportPaste = async () => {
-    const rows = parseMembershipLines(importText)
-    if (rows.length === 0) { showToast('No valid lines found. Format: Name  CID  Type', 'err'); return }
+    const parsed = parseMembershipLog(importText)
+    if (parsed.length === 0) { showToast('No membership entries found in the pasted text.', 'err'); return }
+    // Dedupe within the paste by Citizen ID, keeping the last (most recent) one.
+    const byCid = new Map()
+    for (const r of parsed) if (r.cid) byCid.set(r.cid, r)
+    const rows = [...byCid.values()]
     const have = new Set(list.map(m => (m.cid || '').trim()).filter(Boolean))
-    const seen = new Set()
-    const fresh = rows.filter(r => { if (have.has(r.cid) || seen.has(r.cid)) return false; seen.add(r.cid); return true })
+    const fresh = rows.filter(r => !have.has(r.cid))
     const skipped = rows.length - fresh.length
-    if (fresh.length === 0) { showToast('All rows already exist (by Citizen ID).', 'ok'); return }
-    if (!(await showConfirm({ title: `Import ${fresh.length} membership(s)?`, message: `${fresh.length} new${skipped ? `, ${skipped} skipped as duplicates` : ''}. They start a fresh ${MEMBERSHIP_DAYS} days from now.`, confirmLabel: 'Import' }))) return
+    if (fresh.length === 0) { showToast('All parsed entries already exist (by Citizen ID).', 'ok'); return }
+    if (!(await showConfirm({ title: `Import ${fresh.length} membership(s)?`, message: `Parsed ${parsed.length} line(s) → ${rows.length} unique, ${fresh.length} new${skipped ? `, ${skipped} already in the register` : ''}. Issue dates and sellers are preserved where present; entries with no date start their ${MEMBERSHIP_DAYS} days from now.`, confirmLabel: 'Import' }))) return
     setImporting(true)
     try {
       for (const r of fresh) {
         await addDoc(collection(db, 'pitstop_memberships'), {
-          name: r.name, cid: r.cid, type: r.type, mechanic: importMechanic || '',
-          issuedAt: serverTimestamp(), createdAt: serverTimestamp(),
+          name: r.name, cid: r.cid, type: r.type, mechanic: r.seller || importMechanic || '',
+          issuedAt: r.date || serverTimestamp(), createdAt: serverTimestamp(),
           issuedByUid: user.uid, issuedByLabel: user.email, renewCount: 0, lastRenewedAt: null, imported: true,
         })
       }
@@ -3375,23 +3431,23 @@ function MembershipsManager({ user, role, roster }) {
         {showImport && (
           <div className="card" style={{ marginBottom: '1rem', padding: '1rem' }}>
             <label className="field">
-              <span>Paste one member per line — e.g. “Cheeku Dosanjh 7273 Gold” (copied from Discord)</span>
-              <textarea rows={6} value={importText} onChange={e => setImportText(e.target.value)}
-                placeholder={'Cheeku Dosanjh 7273 Gold\nGhosty Zean 1392 Gold\nDolly Crispin 2367 Pink'}/>
+              <span>Paste the membership log — the whole Discord channel dump works, or one “Name CID Type” per line</span>
+              <textarea rows={7} value={importText} onChange={e => setImportText(e.target.value)}
+                placeholder={'Customer Name - Cheeku Dosanjh\nCID - 7273\nMembership - Gold\nBy - Sandy Guzman\nDate - 02/07/2026\n\n…or simply:\nGhosty Zean 1392 Gold'}/>
             </label>
             <div className="form-row">
-              <label className="field"><span>Assign mechanic (optional)</span>
+              <label className="field"><span>Fallback mechanic (used only if a row has no seller)</span>
                 <select value={importMechanic} onChange={e => setImportMechanic(e.target.value)}>
                   <option value="">— none —</option>
                   {mechanics.map(n => <option key={n} value={n}>{n}</option>)}
                 </select></label>
               <div className="field" style={{ justifyContent: 'flex-end' }}>
                 <button type="button" className="btn btn--primary" onClick={doImportPaste} disabled={importing || previewRows.length === 0}>
-                  {importing ? 'Importing…' : `Import ${previewRows.length || ''} parsed →`}
+                  {importing ? 'Importing…' : `Import ${previewRows.length || ''} detected →`}
                 </button>
               </div>
             </div>
-            <div className="t3">{previewRows.length} row{previewRows.length === 1 ? '' : 's'} detected · name + Citizen ID + optional type per line. Duplicates (by Citizen ID) are skipped; pasted rows start a fresh {MEMBERSHIP_DAYS} days from now.</div>
+            <div className="t3">{previewRows.length} entr{previewRows.length === 1 ? 'y' : 'ies'} detected · parses names, Citizen IDs, type, seller, and date. Duplicates (by Citizen ID) are merged/skipped; issue dates are preserved where present.</div>
           </div>
         )}
 

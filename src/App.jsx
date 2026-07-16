@@ -3139,6 +3139,62 @@ function fmtDay(ms) {
   return ms == null ? '—' : new Date(ms).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' })
 }
 
+// Append-only activity trail for memberships (created / renewed / edited /
+// deleted / imported), so management can track who did what and when. Best-
+// effort: a failed log never blocks the underlying action.
+async function logMembership({ action, m, before, after, actor, note }) {
+  try {
+    await addDoc(collection(db, 'pitstop_membership_logs'), {
+      action,
+      cid: m?.cid || '', name: m?.name || '', type: m?.type || '', mechanic: m?.mechanic || '',
+      note: note || '', before: before || null, after: after || null,
+      actorUid: actor?.uid || null, actorLabel: actor?.email || 'unknown',
+      createdAt: serverTimestamp(),
+    })
+  } catch (err) { console.error('[membership log] failed:', err) }
+}
+
+// Read-only membership activity trail (management/admin only).
+function MembershipLogs() {
+  const [logs, setLogs] = useState([])
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'pitstop_membership_logs'),
+      snap => {
+        const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+        docs.sort((a, b) => (b.createdAt?.seconds ?? 0) - (a.createdAt?.seconds ?? 0))
+        setLogs(docs.slice(0, 300))
+      },
+      err => console.error('[membership logs] read failed:', err))
+    return unsub
+  }, [])
+  const actionStatus = a => (a === 'created' || a === 'imported') ? 'accepted' : a === 'deleted' ? 'cancelled' : 'new'
+  return (
+    <>
+      <div className="log-list-h">Membership activity · {logs.length}{logs.length === 300 ? '+' : ''}</div>
+      <div className="ticket-table-wrap">
+        <table className="ticket-table">
+          <thead>
+            <tr><th>When (IST)</th><th>Action</th><th>Name</th><th>Citizen ID</th><th>Type</th><th>By</th></tr>
+          </thead>
+          <tbody>
+            {logs.length === 0 && <tr><td colSpan={6} className="empty">No membership activity logged yet.</td></tr>}
+            {logs.map(l => (
+              <tr key={l.id}>
+                <td className="ticket-table-time">{fmtStamp(l.createdAt)}</td>
+                <td><span className={`status status--${actionStatus(l.action)}`}>{l.action}</span></td>
+                <td className="wrap">{l.name}{l.note ? ` · ${l.note}` : ''}</td>
+                <td>{l.cid || '—'}</td>
+                <td>{l.type || '—'}</td>
+                <td className="wrap">{l.actorLabel}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </>
+  )
+}
+
 // Includes the aliases so a type keyword is still detected in free text; they
 // all collapse to a canonical MEMBERSHIP_TYPES value via normalizeMembershipType.
 const MEMBERSHIP_TYPE_RE = /\b(Gold|Pink|Blue|PSM|PMS|PD|EMS)\b/i
@@ -3341,6 +3397,7 @@ function MembershipsManager({ user, role }) {
   const [importDate, setImportDate] = useState('')      // fallback issue date for rows with none
   const [importOverwrite, setImportOverwrite] = useState(false)   // update CIDs already in the register
   const [importing, setImporting] = useState(false)
+  const [showLogs, setShowLogs] = useState(false)
   const [, setTick] = useState(0)                       // 60s heartbeat so status stays live
   const nameRef = useRef(null)
   const canAdmin = isAdmin(user, role)                  // import + delete: admin/management
@@ -3378,6 +3435,7 @@ function MembershipsManager({ user, role }) {
         issuedByUid: user.uid, issuedByLabel: user.email,
         renewCount: 0, lastRenewedAt: null,
       })
+      logMembership({ action: 'created', m: { cid, name: form.name.trim(), type: form.type, mechanic: form.mechanic }, actor: user })
       setForm(f => ({ name: '', cid: '', type: f.type, category: f.category, mechanic: f.mechanic }))   // keep type + seller for fast repeat entry
       setStatus({ state: 'ok', msg: `Membership added — valid ${MEMBERSHIP_DAYS} days.` })
       nameRef.current?.focus()
@@ -3389,6 +3447,7 @@ function MembershipsManager({ user, role }) {
     setBusyId(m.id)
     try {
       await updateDoc(doc(db, 'pitstop_memberships', m.id), { issuedAt: serverTimestamp(), renewCount: (m.renewCount || 0) + 1, lastRenewedAt: serverTimestamp() })
+      logMembership({ action: 'renewed', m, note: `renewal #${(m.renewCount || 0) + 1}`, actor: user })
       showToast(`${m.name} renewed — ${MEMBERSHIP_DAYS} more days.`, 'ok')
     } catch (err) { showToast('Renew failed: ' + (err.message || err.code), 'err') }
     finally { setBusyId(null) }
@@ -3397,7 +3456,10 @@ function MembershipsManager({ user, role }) {
   const remove = async m => {
     if (!(await showConfirm({ title: 'Delete membership?', message: `Remove ${m.name}'s membership record entirely?`, confirmLabel: 'Delete', danger: true }))) return
     setBusyId(m.id)
-    try { await deleteDoc(doc(db, 'pitstop_memberships', m.id)) }
+    try {
+      await deleteDoc(doc(db, 'pitstop_memberships', m.id))
+      logMembership({ action: 'deleted', m, actor: user })
+    }
     catch (err) { showToast('Delete failed: ' + (err.message || err.code), 'err') }
     finally { setBusyId(null) }
   }
@@ -3406,7 +3468,12 @@ function MembershipsManager({ user, role }) {
   const saveEdit = async m => {
     if (!draft.name.trim() || !draft.cid.trim()) return
     setBusyId(m.id)
-    try { await updateDoc(doc(db, 'pitstop_memberships', m.id), { name: draft.name.trim(), cid: draft.cid.trim(), type: draft.type, mechanic: draft.mechanic }); setEditingId(null) }
+    try {
+      const after = { name: draft.name.trim(), cid: draft.cid.trim(), type: draft.type, mechanic: draft.mechanic }
+      await updateDoc(doc(db, 'pitstop_memberships', m.id), after)
+      logMembership({ action: 'edited', m: after, before: { name: m.name, cid: m.cid, type: m.type, mechanic: m.mechanic }, after, actor: user })
+      setEditingId(null)
+    }
     catch (err) { showToast('Save failed: ' + (err.message || err.code), 'err') }
     finally { setBusyId(null) }
   }
@@ -3442,6 +3509,7 @@ function MembershipsManager({ user, role }) {
           issuedByUid: user.uid, issuedByLabel: user.email, renewCount: 0, lastRenewedAt: null, imported: true,
         })
       }
+      logMembership({ action: 'imported', m: { name: `Bulk paste import` }, note: `${fresh.length} rows${importOverwrite && overlap ? `, ${overlap} overwritten` : ''}`, actor: user })
       setImportText(''); setShowImport(false)
       showToast(`Imported ${fresh.length} membership${fresh.length === 1 ? '' : 's'}${importOverwrite && overlap ? ` (${overlap} updated)` : ''}.`, 'ok')
     } catch (err) { showToast('Import failed: ' + (err.message || err.code), 'err') }
@@ -3478,6 +3546,7 @@ function MembershipsManager({ user, role }) {
           renewCount: 0, lastRenewedAt: null, importedFrom: 'membership-ticket',
         })
       }
+      logMembership({ action: 'imported', m: { name: 'Membership-ticket import' }, note: `${fresh.length} from launch tickets`, actor: user })
       showToast(`Imported ${fresh.length} membership${fresh.length === 1 ? '' : 's'} from tickets.`, 'ok')
     } catch (err) { showToast('Import failed: ' + (err.message || err.code), 'err') }
     finally { setImporting(false) }
@@ -3571,8 +3640,11 @@ function MembershipsManager({ user, role }) {
             <button type="button" className="btn btn--ghost btn--sm" onClick={() => setShowImport(s => !s)}>{showImport ? 'Close import' : 'Bulk import (paste)'}</button>
             <button type="button" className="btn btn--ghost btn--sm" onClick={importExistingTickets} disabled={importing}>{importing ? 'Working…' : 'Import existing membership tickets'}</button>
             <button type="button" className="btn btn--del btn--sm" onClick={removeDuplicates} disabled={importing}>Remove duplicates</button>
+            <button type="button" className="btn btn--ghost btn--sm" onClick={() => setShowLogs(s => !s)}>{showLogs ? 'Hide logs' : 'Membership logs'}</button>
           </div>
         )}
+
+        {canAdmin && showLogs && <MembershipLogs/>}
 
         {canAdmin && showImport && (
           <div className="card" style={{ marginBottom: '1rem', padding: '1rem' }}>

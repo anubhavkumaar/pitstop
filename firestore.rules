@@ -177,6 +177,14 @@ service cloud.firestore {
       allow delete: if isAdmin();
     }
 
+    // Membership activity trail — written by whoever performs the action; read
+    // by admins/management. Immutable, like the giveaway audit log.
+    match /pitstop_membership_logs/{doc} {
+      allow create: if isAdmin() || (signedIn() && userRole() in ['membership', 'bennys']);
+      allow read:   if isAdmin();
+      allow update, delete: if false;
+    }
+
     // Default deny — anything not matched above is rejected.
     match /{document=**} {
       allow read, write: if false;

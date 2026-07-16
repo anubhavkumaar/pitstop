@@ -1,0 +1,30 @@
+# Weekly sync of the mechanics/sellers roster from the Benny's ops sheet into
+# Firestore (pitstop_sellers), so the membership form's category → name dropdown
+# picks up newly added staff. Additive only — see scripts/sync-sellers.mjs.
+#
+# Prerequisites:
+#   - The sheet stays shared as "Anyone with the link → Viewer" (the gviz CSV
+#     URL below must be readable without a Google login).
+#   - secrets.FIREBASE_SERVICE_ACCOUNT_PITSTOP_SERVICES has Firestore write access.
+name: Weekly sellers sync
+on:
+  schedule:
+    - cron: '0 6 * * 1'   # Mondays, 06:00 UTC
+  workflow_dispatch: {}   # allow manual runs to test
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm install firebase-admin@12 --no-save
+      - name: Sync sellers from sheet
+        env:
+          GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/sa.json
+          SELLERS_SHEET_CSV: 'https://docs.google.com/spreadsheets/d/1wZxs_3zOUnd_KSvWTBSeNCzdUXa3L6bmU8ADcTmG22g/export?format=csv&gid=237831052'
+        run: |
+          printf '%s' '${{ secrets.FIREBASE_SERVICE_ACCOUNT_PITSTOP_SERVICES }}' > "$GOOGLE_APPLICATION_CREDENTIALS"
+          node scripts/sync-sellers.mjs
+          rm -f "$GOOGLE_APPLICATION_CREDENTIALS"

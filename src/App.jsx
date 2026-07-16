@@ -3221,7 +3221,17 @@ function MembershipsPage() {
   if (!loaded || (user && role === undefined)) return <main className="page"><div className="loading">Loading…</div></main>
   // Staff who can manage memberships get the full editor; everyone else (public
   // or a signed-in non-member account) gets the read-only register.
-  if (user && canMemberTokens(user, role)) return <MembershipsManager user={user} role={role}/>
+  if (user && canMemberTokens(user, role)) return (
+    <main className="page">
+      <GiveawayPageHeader kicker="Memberships" title="Membership register.">
+        Every membership is valid for {MEMBERSHIP_DAYS} days from its issue date. Expired ones stay listed (in red) — hit <b>Renew</b> to start another {MEMBERSHIP_DAYS} days from today.
+      </GiveawayPageHeader>
+      <section className="section">
+        <StaffToolbar user={user}/>
+        <MembershipsManager user={user} role={role}/>
+      </section>
+    </main>
+  )
   return <MembershipsPublic user={user}/>
 }
 
@@ -3518,15 +3528,10 @@ function MembershipsManager({ user, role }) {
     return true
   })
 
+  // Body only (no page chrome) — the standalone /memberships page and the Admin
+  // Memberships tab each wrap this in their own header/section.
   return (
-    <main className="page">
-      <GiveawayPageHeader kicker="Memberships" title="Membership register.">
-        Every membership is valid for {MEMBERSHIP_DAYS} days from its issue date. Expired ones stay listed (in red) — hit <b>Renew</b> to start another {MEMBERSHIP_DAYS} days from today.
-      </GiveawayPageHeader>
-
-      <section className="section">
-        <StaffToolbar user={user}/>
-
+    <>
         <form className="form" onSubmit={issue}>
           <div className="form-row">
             <label className="field"><span>Member name *</span>
@@ -3671,8 +3676,7 @@ function MembershipsManager({ user, role }) {
             </tbody>
           </table>
         </div>
-      </section>
-    </main>
+    </>
   )
 }
 
@@ -3777,6 +3781,7 @@ function AdminInner({ user, role }) {
   const titles = {
     roster:   { title: 'Manage the roster.', sub: 'Add, edit, or remove crew on the public /team page.' },
     sellers:  { title: 'Mechanics & sellers.', sub: 'The roster of who can issue memberships, grouped by category — feeds the membership form’s category → name pickers.' },
+    memberships: { title: 'Memberships.', sub: 'Issue, import, renew, and manage 14-day memberships — the same register as the public /memberships page.' },
     users:    { title: 'Manage users.',      sub: 'Create accounts, change roles, block, or remove access. Management-only.' },
     giveaway: { title: "Benny's launch giveaway (archived).", sub: "The launch-day raffle pools and spin-wheel draws. Kept here for records now that opening is done — issuance is off the public nav." },
     settings: { title: 'Settings.',          sub: 'Integrations and secrets. Admin-only — never visible to public visitors.' },
@@ -3799,6 +3804,7 @@ function AdminInner({ user, role }) {
         <div className="tabs tabs--main">
           <button className={`tab ${tab === 'roster'   ? 'is-on' : ''}`} onClick={() => setTab('roster')}>Roster</button>
           <button className={`tab ${tab === 'sellers'  ? 'is-on' : ''}`} onClick={() => setTab('sellers')}>Sellers</button>
+          <button className={`tab ${tab === 'memberships' ? 'is-on' : ''}`} onClick={() => setTab('memberships')}>Memberships</button>
           {isManagement && <button className={`tab ${tab === 'users' ? 'is-on' : ''}`} onClick={() => setTab('users')}>Users</button>}
           <button className={`tab ${tab === 'settings' ? 'is-on' : ''}`} onClick={() => setTab('settings')}>Settings</button>
           {isManagement && <button className={`tab ${tab === 'audit' ? 'is-on' : ''}`} onClick={() => setTab('audit')}>Audit Log</button>}
@@ -3807,6 +3813,7 @@ function AdminInner({ user, role }) {
 
         {tab === 'roster'   && <AdminRoster/>}
         {tab === 'sellers'  && <AdminSellers/>}
+        {tab === 'memberships' && <MembershipsManager user={user} role={role}/>}
         {tab === 'users'    && isManagement && <AdminUsers currentUser={user}/>}
         {tab === 'giveaway' && <AdminGiveaway/>}
         {tab === 'settings' && <AdminSettings/>}

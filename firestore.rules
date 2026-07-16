@@ -162,9 +162,11 @@ service cloud.firestore {
     match /pitstop_memberships/{doc} {
       allow read: if isStaff()
         || (signedIn() && userRole() in ['membership', 'bennys']);
+      // Mechanics (membership/bennys) can add + edit; renew/import are gated to
+      // admins in the UI. Deleting a record is admin/management only.
       allow create, update: if isAdmin()
         || (signedIn() && userRole() in ['membership', 'bennys']);
-      allow delete: if isManagementOnly();
+      allow delete: if isAdmin();
     }
 
     // Default deny — anything not matched above is rejected.

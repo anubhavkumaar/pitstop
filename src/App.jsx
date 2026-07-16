@@ -3258,10 +3258,11 @@ function MembershipsManager({ user, role, roster }) {
   const [showImport, setShowImport] = useState(false)
   const [importText, setImportText] = useState('')
   const [importMechanic, setImportMechanic] = useState('')
+  const [importDate, setImportDate] = useState('')      // fallback issue date for rows with none
   const [importing, setImporting] = useState(false)
   const [, setTick] = useState(0)                       // 60s heartbeat so status stays live
   const nameRef = useRef(null)
-  const canManage = canManageEntries(user, role)
+  const canAdmin = isAdmin(user, role)                  // import / renew / delete are admin+management only
   const mechanics = roster.map(m => m.name)
   const previewRows = parseMembershipLog(importText)
 
@@ -3339,13 +3340,18 @@ function MembershipsManager({ user, role, roster }) {
     const fresh = rows.filter(r => !have.has(r.cid))
     const skipped = rows.length - fresh.length
     if (fresh.length === 0) { showToast('All parsed entries already exist (by Citizen ID).', 'ok'); return }
-    if (!(await showConfirm({ title: `Import ${fresh.length} membership(s)?`, message: `Parsed ${parsed.length} line(s) → ${rows.length} unique, ${fresh.length} new${skipped ? `, ${skipped} already in the register` : ''}. Issue dates and sellers are preserved where present; entries with no date start their ${MEMBERSHIP_DAYS} days from now.`, confirmLabel: 'Import' }))) return
+    const noDate = fresh.filter(r => !r.date).length
+    const fallback = importDate ? new Date(`${importDate}T12:00:00`) : null
+    const dateNote = noDate === 0 ? 'All have an issue date.'
+      : fallback ? `${noDate} have no date → set to ${importDate}.`
+      : `${noDate} have no date → will start ${MEMBERSHIP_DAYS} days from now (set a fallback date to fix this).`
+    if (!(await showConfirm({ title: `Import ${fresh.length} membership(s)?`, message: `Parsed ${parsed.length} line(s) → ${rows.length} unique, ${fresh.length} new${skipped ? `, ${skipped} already in the register` : ''}. ${dateNote}`, confirmLabel: 'Import' }))) return
     setImporting(true)
     try {
       for (const r of fresh) {
         await setDoc(doc(db, 'pitstop_memberships', membershipDocId(r.cid)), {
           name: r.name, cid: r.cid, type: r.type, mechanic: r.seller || importMechanic || '',
-          issuedAt: r.date || serverTimestamp(), createdAt: serverTimestamp(),
+          issuedAt: r.date || fallback || serverTimestamp(), createdAt: serverTimestamp(),
           issuedByUid: user.uid, issuedByLabel: user.email, renewCount: 0, lastRenewedAt: null, imported: true,
         })
       }
@@ -3471,13 +3477,15 @@ function MembershipsManager({ user, role, roster }) {
           </div>
         </form>
 
-        <div className="form-foot" style={{ marginBottom: '1rem' }}>
-          <button type="button" className="btn btn--ghost btn--sm" onClick={() => setShowImport(s => !s)}>{showImport ? 'Close import' : 'Bulk import (paste)'}</button>
-          <button type="button" className="btn btn--ghost btn--sm" onClick={importExistingTickets} disabled={importing}>{importing ? 'Working…' : 'Import existing membership tickets'}</button>
-          <button type="button" className="btn btn--del btn--sm" onClick={removeDuplicates} disabled={importing}>Remove duplicates</button>
-        </div>
+        {canAdmin && (
+          <div className="form-foot" style={{ marginBottom: '1rem' }}>
+            <button type="button" className="btn btn--ghost btn--sm" onClick={() => setShowImport(s => !s)}>{showImport ? 'Close import' : 'Bulk import (paste)'}</button>
+            <button type="button" className="btn btn--ghost btn--sm" onClick={importExistingTickets} disabled={importing}>{importing ? 'Working…' : 'Import existing membership tickets'}</button>
+            <button type="button" className="btn btn--del btn--sm" onClick={removeDuplicates} disabled={importing}>Remove duplicates</button>
+          </div>
+        )}
 
-        {showImport && (
+        {canAdmin && showImport && (
           <div className="card" style={{ marginBottom: '1rem', padding: '1rem' }}>
             <label className="field">
               <span>Paste the membership log — the whole Discord channel dump works, or one “Name CID Type” per line</span>
@@ -3490,13 +3498,15 @@ function MembershipsManager({ user, role, roster }) {
                   <option value="">— none —</option>
                   {mechanics.map(n => <option key={n} value={n}>{n}</option>)}
                 </select></label>
-              <div className="field" style={{ justifyContent: 'flex-end' }}>
-                <button type="button" className="btn btn--primary" onClick={doImportPaste} disabled={importing || previewRows.length === 0}>
-                  {importing ? 'Importing…' : `Import ${previewRows.length || ''} detected →`}
-                </button>
-              </div>
+              <label className="field"><span>Issue date for rows without one (e.g. Xavier’s PD/EMS list)</span>
+                <input type="date" value={importDate} onChange={e => setImportDate(e.target.value)}/></label>
             </div>
-            <div className="t3">{previewRows.length} entr{previewRows.length === 1 ? 'y' : 'ies'} detected · parses names, Citizen IDs, type, seller, and date. Duplicates (by Citizen ID) are merged/skipped; issue dates are preserved where present.</div>
+            <div className="form-foot">
+              <button type="button" className="btn btn--primary" onClick={doImportPaste} disabled={importing || previewRows.length === 0}>
+                {importing ? 'Importing…' : `Import ${previewRows.length || ''} detected →`}
+              </button>
+            </div>
+            <div className="t3">{previewRows.length} entr{previewRows.length === 1 ? 'y' : 'ies'} detected · parses names, Citizen IDs, type, seller, and date. Duplicates (by Citizen ID) are merged/skipped; issue dates are preserved where present, and undated rows use the date above.</div>
           </div>
         )}
 
@@ -3561,9 +3571,9 @@ function MembershipsManager({ user, role, roster }) {
                         </>
                       ) : (
                         <>
-                          <button className="btn btn--primary btn--sm" onClick={() => renew(m)} disabled={busyId === m.id}>Renew</button>
+                          {canAdmin && <button className="btn btn--primary btn--sm" onClick={() => renew(m)} disabled={busyId === m.id}>Renew</button>}
                           <button className="btn btn--ghost btn--sm" onClick={() => startEdit(m)} disabled={busyId === m.id}>Edit</button>
-                          {canManage && <button className="btn btn--del btn--sm" onClick={() => remove(m)} disabled={busyId === m.id}>{busyId === m.id ? '…' : 'Delete'}</button>}
+                          {canAdmin && <button className="btn btn--del btn--sm" onClick={() => remove(m)} disabled={busyId === m.id}>{busyId === m.id ? '…' : 'Delete'}</button>}
                         </>
                       )}
                     </td>

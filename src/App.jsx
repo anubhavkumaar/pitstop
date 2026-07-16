@@ -2878,9 +2878,9 @@ function TicketTable({ tickets, showNote, noteLabel, user, role }) {
                 </>
               ) : (
                 <>
-                  <td>{t.name}</td>
+                  <td className="wrap">{t.name}</td>
                   <td>{t.citizenId || '—'}</td>
-                  {showNote && <td>{t.note || '—'}</td>}
+                  {showNote && <td className="wrap">{t.note || '—'}</td>}
                 </>
               )}
               <td className="ticket-table-time">{fmtStamp(t.createdAt)}</td>
@@ -3105,6 +3105,10 @@ function membershipStart(m) {
   if (m.issuedAt?.seconds) return m.issuedAt.seconds * 1000
   return null
 }
+// Deterministic doc id keyed on Citizen ID so a person can only ever have one
+// membership doc — re-adding / re-importing the same CID overwrites in place
+// instead of creating a duplicate, regardless of snapshot timing.
+const membershipDocId = cid => `cid_${(cid || '').trim()}`
 // No backend cron exists, so validity is derived from the issue date on every
 // render (a 60s tick keeps it live). A membership expires MEMBERSHIP_DAYS after
 // its current issue date; renewing just moves that date to now.
@@ -3246,6 +3250,8 @@ function MembershipsManager({ user, role, roster }) {
   const [form, setForm] = useState({ name: '', cid: '', type: 'Gold', mechanic: '' })
   const [status, setStatus] = useState({ state: 'idle', msg: '' })
   const [filter, setFilter] = useState('all')          // all | active | expired
+  const [typeFilter, setTypeFilter] = useState('all')
+  const [search, setSearch] = useState('')
   const [busyId, setBusyId] = useState(null)
   const [editingId, setEditingId] = useState(null)
   const [draft, setDraft] = useState({ name: '', cid: '', type: 'Gold', mechanic: '' })
@@ -3276,10 +3282,13 @@ function MembershipsManager({ user, role, roster }) {
     if (!form.name.trim()) { setStatus({ state: 'err', msg: 'Enter a name.' }); return }
     if (!form.cid.trim())  { setStatus({ state: 'err', msg: 'Enter a Citizen ID.' }); return }
     if (!form.mechanic)    { setStatus({ state: 'err', msg: 'Select the mechanic who issued it.' }); return }
+    const cid = form.cid.trim()
+    const dupe = list.find(m => (m.cid || '').trim() === cid)
+    if (dupe && !(await showConfirm({ title: 'CID already has a membership', message: `${dupe.name} (${dupe.type || '—'}) already holds a membership on CID ${cid}. Replace it with this new one?`, confirmLabel: 'Replace', danger: true }))) return
     setStatus({ state: 'sending', msg: '' })
     try {
-      await addDoc(collection(db, 'pitstop_memberships'), {
-        name: form.name.trim(), cid: form.cid.trim(), type: form.type, mechanic: form.mechanic,
+      await setDoc(doc(db, 'pitstop_memberships', membershipDocId(cid)), {
+        name: form.name.trim(), cid, type: form.type, mechanic: form.mechanic,
         issuedAt: serverTimestamp(), createdAt: serverTimestamp(),
         issuedByUid: user.uid, issuedByLabel: user.email,
         renewCount: 0, lastRenewedAt: null,
@@ -3334,7 +3343,7 @@ function MembershipsManager({ user, role, roster }) {
     setImporting(true)
     try {
       for (const r of fresh) {
-        await addDoc(collection(db, 'pitstop_memberships'), {
+        await setDoc(doc(db, 'pitstop_memberships', membershipDocId(r.cid)), {
           name: r.name, cid: r.cid, type: r.type, mechanic: r.seller || importMechanic || '',
           issuedAt: r.date || serverTimestamp(), createdAt: serverTimestamp(),
           issuedByUid: user.uid, issuedByLabel: user.email, renewCount: 0, lastRenewedAt: null, imported: true,
@@ -3359,15 +3368,17 @@ function MembershipsManager({ user, role, roster }) {
       const seen = new Set()
       const fresh = tickets.filter(t => {
         const cid = (t.citizenId || '').trim()
-        if (cid && (have.has(cid) || seen.has(cid))) return false
-        if (cid) seen.add(cid)
-        return !!(t.name || '').trim()
+        if (!cid || !(t.name || '').trim()) return false        // need a CID to key on
+        if (have.has(cid) || seen.has(cid)) return false
+        seen.add(cid)
+        return true
       })
       if (fresh.length === 0) { showToast('No new membership tickets to import.', 'ok'); return }
       if (!(await showConfirm({ title: `Import ${fresh.length} membership ticket(s)?`, message: 'Brings the launch membership tickets into the register, keeping their original issue date and tier. Duplicates (by Citizen ID) are skipped.', confirmLabel: 'Import' }))) return
       for (const t of fresh) {
-        await addDoc(collection(db, 'pitstop_memberships'), {
-          name: (t.name || '').trim(), cid: (t.citizenId || '').trim(),
+        const cid = (t.citizenId || '').trim()
+        await setDoc(doc(db, 'pitstop_memberships', membershipDocId(cid)), {
+          name: (t.name || '').trim(), cid,
           type: normalizeMembershipType(t.note || ''), mechanic: '',
           issuedAt: t.createdAt || serverTimestamp(), createdAt: t.createdAt || serverTimestamp(),
           issuedByUid: t.issuedByUid || null, issuedByLabel: t.issuedByLabel || 'imported',
@@ -3379,12 +3390,49 @@ function MembershipsManager({ user, role, roster }) {
     finally { setImporting(false) }
   }
 
+  // Cleanup for the duplicates created before writes were keyed by CID: keep the
+  // most recent membership per Citizen ID, move it to the canonical id, and delete
+  // the rest — so every person ends up with exactly one record.
+  const removeDuplicates = async () => {
+    if (importing) return
+    const groups = new Map()
+    for (const m of list) {
+      const cid = (m.cid || '').trim()
+      if (!cid) continue
+      if (!groups.has(cid)) groups.set(cid, [])
+      groups.get(cid).push(m)
+    }
+    const jobs = [...groups.entries()].filter(([, docs]) => docs.length > 1)
+    const dupCount = jobs.reduce((n, [, docs]) => n + docs.length - 1, 0)
+    if (dupCount === 0) { showToast('No duplicates found — every Citizen ID is unique.', 'ok'); return }
+    if (!(await showConfirm({ title: 'Remove duplicate memberships?', message: `Keeps the most recent membership per Citizen ID and removes ${dupCount} duplicate${dupCount === 1 ? '' : 's'}.`, confirmLabel: 'Remove duplicates', danger: true }))) return
+    setImporting(true)
+    try {
+      for (const [cid, docs] of jobs) {
+        docs.sort((a, b) => (membershipStart(b) || 0) - (membershipStart(a) || 0))   // newest first
+        const keeper = docs[0]
+        const canonical = membershipDocId(cid)
+        if (keeper.id !== canonical) {
+          const { id, ...data } = keeper                                             // eslint-disable-line no-unused-vars
+          await setDoc(doc(db, 'pitstop_memberships', canonical), data)
+        }
+        for (const m of docs) if (m.id !== canonical) await deleteDoc(doc(db, 'pitstop_memberships', m.id))
+      }
+      showToast(`Removed ${dupCount} duplicate${dupCount === 1 ? '' : 's'}.`, 'ok')
+    } catch (err) { showToast('Cleanup failed: ' + (err.message || err.code), 'err') }
+    finally { setImporting(false) }
+  }
+
   const activeCount  = list.filter(m => !membershipStatus(m).expired).length
   const expiredCount = list.length - activeCount
+  const q = search.trim().toLowerCase()
   const filtered = list.filter(m => {
-    if (filter === 'all') return true
     const s = membershipStatus(m)
-    return filter === 'active' ? !s.expired : s.expired
+    if (filter === 'active' && s.expired) return false
+    if (filter === 'expired' && !s.expired) return false
+    if (typeFilter !== 'all' && (m.type || '') !== typeFilter) return false
+    if (q && !(`${m.name || ''} ${m.cid || ''} ${m.mechanic || ''}`.toLowerCase().includes(q))) return false
+    return true
   })
 
   return (
@@ -3393,7 +3441,7 @@ function MembershipsManager({ user, role, roster }) {
         Every membership is valid for {MEMBERSHIP_DAYS} days from its issue date. Expired ones stay listed (in red) — hit <b>Renew</b> to start another {MEMBERSHIP_DAYS} days from today.
       </GiveawayPageHeader>
 
-      <section className="section section--narrow">
+      <section className="section">
         <StaffToolbar user={user}/>
 
         <form className="form" onSubmit={issue}>
@@ -3426,6 +3474,7 @@ function MembershipsManager({ user, role, roster }) {
         <div className="form-foot" style={{ marginBottom: '1rem' }}>
           <button type="button" className="btn btn--ghost btn--sm" onClick={() => setShowImport(s => !s)}>{showImport ? 'Close import' : 'Bulk import (paste)'}</button>
           <button type="button" className="btn btn--ghost btn--sm" onClick={importExistingTickets} disabled={importing}>{importing ? 'Working…' : 'Import existing membership tickets'}</button>
+          <button type="button" className="btn btn--del btn--sm" onClick={removeDuplicates} disabled={importing}>Remove duplicates</button>
         </div>
 
         {showImport && (
@@ -3451,11 +3500,19 @@ function MembershipsManager({ user, role, roster }) {
           </div>
         )}
 
-        <div className="chips" style={{ marginBottom: '1rem' }}>
-          {[['all', `All · ${list.length}`], ['active', `Active · ${activeCount}`], ['expired', `Expired · ${expiredCount}`]].map(([k, lbl]) => (
-            <button type="button" key={k} className={`chip ${filter === k ? 'chip--on' : ''}`} onClick={() => setFilter(k)}>{lbl}</button>
-          ))}
+        <div className="mem-controls">
+          <input className="mem-search" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search name, Citizen ID, or mechanic…"/>
+          <div className="chips">
+            {[['all', `All · ${list.length}`], ['active', `Active · ${activeCount}`], ['expired', `Expired · ${expiredCount}`]].map(([k, lbl]) => (
+              <button type="button" key={k} className={`chip ${filter === k ? 'chip--on' : ''}`} onClick={() => setFilter(k)}>{lbl}</button>
+            ))}
+          </div>
+          <select className="mem-select" value={typeFilter} onChange={e => setTypeFilter(e.target.value)}>
+            <option value="all">All types</option>
+            {MEMBERSHIP_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
         </div>
+        <div className="mem-count">Showing {filtered.length} of {list.length}</div>
 
         <div className="ticket-table-wrap">
           <table className="ticket-table">
@@ -3487,10 +3544,10 @@ function MembershipsManager({ user, role, roster }) {
                       </>
                     ) : (
                       <>
-                        <td>{m.name}</td>
+                        <td className="wrap">{m.name}</td>
                         <td>{m.cid || '—'}</td>
                         <td>{m.type || '—'}</td>
-                        <td>{m.mechanic || '—'}</td>
+                        <td className="wrap">{m.mechanic || '—'}</td>
                       </>
                     )}
                     <td className="ticket-table-time">{fmtDay(start)}</td>

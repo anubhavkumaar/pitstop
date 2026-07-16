@@ -154,6 +154,22 @@ function useRoster() {
   return roster
 }
 
+// Mechanics/sellers who can issue memberships — an admin-managed roster grouped
+// by category, feeding the membership form's category → name pickers. Sorted
+// client-side so docs missing a field aren't dropped by an orderBy.
+function useSellers() {
+  const [sellers, setSellers] = useState([])
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'pitstop_sellers'), snap => {
+      const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+      docs.sort((a, b) => (a.category || '').localeCompare(b.category || '') || (a.name || '').localeCompare(b.name || ''))
+      setSellers(docs)
+    }, () => { /* offline / not configured */ })
+    return unsub
+  }, [])
+  return sellers
+}
+
 // Issues one Benny's-giveaway ticket: a short, collision-checked code plus
 // the Firestore doc. One doc per ticket (buying twice = two docs) so ticket
 // weight in the draw falls out naturally — no separate count field needed.
@@ -3202,11 +3218,10 @@ function parseMembershipLog(text) {
 
 function MembershipsPage() {
   const { user, role, loaded } = useAuth()
-  const roster = useRoster()
   if (!loaded || (user && role === undefined)) return <main className="page"><div className="loading">Loading…</div></main>
   // Staff who can manage memberships get the full editor; everyone else (public
   // or a signed-in non-member account) gets the read-only register.
-  if (user && canMemberTokens(user, role)) return <MembershipsManager user={user} role={role} roster={roster}/>
+  if (user && canMemberTokens(user, role)) return <MembershipsManager user={user} role={role}/>
   return <MembershipsPublic user={user}/>
 }
 
@@ -3299,9 +3314,10 @@ function MembershipsPublic({ user }) {
   )
 }
 
-function MembershipsManager({ user, role, roster }) {
+function MembershipsManager({ user, role }) {
+  const sellers = useSellers()
   const [list, setList] = useState([])
-  const [form, setForm] = useState({ name: '', cid: '', type: 'Gold', mechanic: '' })
+  const [form, setForm] = useState({ name: '', cid: '', type: 'Gold', category: '', mechanic: '' })
   const [status, setStatus] = useState({ state: 'idle', msg: '' })
   const [filter, setFilter] = useState('all')          // all | active | expired
   const [typeFilter, setTypeFilter] = useState('all')
@@ -3319,7 +3335,9 @@ function MembershipsManager({ user, role, roster }) {
   const nameRef = useRef(null)
   const canAdmin = isAdmin(user, role)                  // import + delete: admin/management
   const canManage = canManageEntries(user, role)        // renew: management only
-  const mechanics = roster.map(m => m.name)
+  const mechanicNames = sellers.map(s => s.name)        // flat list for edit + import fallback
+  const sellerCats = [...new Set(sellers.map(s => s.category || 'Uncategorized'))].sort()
+  const sellersInCat = sellers.filter(s => (s.category || 'Uncategorized') === form.category)
   const previewRows = parseMembershipLog(importText)
 
   useEffect(() => {
@@ -3345,12 +3363,12 @@ function MembershipsManager({ user, role, roster }) {
     setStatus({ state: 'sending', msg: '' })
     try {
       await setDoc(doc(db, 'pitstop_memberships', membershipDocId(cid)), {
-        name: form.name.trim(), cid, type: form.type, mechanic: form.mechanic,
+        name: form.name.trim(), cid, type: form.type, mechanic: form.mechanic, mechanicCategory: form.category,
         issuedAt: serverTimestamp(), createdAt: serverTimestamp(),
         issuedByUid: user.uid, issuedByLabel: user.email,
         renewCount: 0, lastRenewedAt: null,
       })
-      setForm(f => ({ name: '', cid: '', type: f.type, mechanic: f.mechanic }))   // keep type + mechanic for fast repeat entry
+      setForm(f => ({ name: '', cid: '', type: f.type, category: f.category, mechanic: f.mechanic }))   // keep type + seller for fast repeat entry
       setStatus({ state: 'ok', msg: `Membership added — valid ${MEMBERSHIP_DAYS} days.` })
       nameRef.current?.focus()
     } catch (err) { setStatus({ state: 'err', msg: 'Could not save: ' + (err.message || err.code) }) }
@@ -3521,12 +3539,19 @@ function MembershipsManager({ user, role, roster }) {
               <select value={form.type} onChange={e => setForm({ ...form, type: e.target.value })}>
                 {MEMBERSHIP_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
               </select></label>
-            <label className="field"><span>Issued by (mechanic) *</span>
-              <select value={form.mechanic} onChange={e => setForm({ ...form, mechanic: e.target.value })}>
-                <option value="">Select mechanic…</option>
-                {mechanics.map(n => <option key={n} value={n}>{n}</option>)}
+            <label className="field"><span>Category *</span>
+              <select value={form.category} onChange={e => setForm({ ...form, category: e.target.value, mechanic: '' })}>
+                <option value="">Select category…</option>
+                {sellerCats.map(c => <option key={c} value={c}>{c}</option>)}
               </select></label>
           </div>
+          <label className="field"><span>Issued by (mechanic) *</span>
+            <select value={form.mechanic} onChange={e => setForm({ ...form, mechanic: e.target.value })} disabled={!form.category}>
+              <option value="">{form.category ? 'Select name…' : 'Pick a category first'}</option>
+              {sellersInCat.map(s => <option key={s.id} value={s.name}>{s.name}</option>)}
+            </select>
+            {sellerCats.length === 0 && <span className="t3" style={{ marginTop: '.35rem' }}>No sellers configured yet — add them in Admin → Sellers.</span>}
+          </label>
           <div className="form-foot">
             <button className="btn btn--primary" type="submit" disabled={status.state === 'sending'}>
               {status.state === 'sending' ? 'Saving…' : 'Add membership →'}
@@ -3555,7 +3580,7 @@ function MembershipsManager({ user, role, roster }) {
               <label className="field"><span>Fallback mechanic (used only if a row has no seller)</span>
                 <select value={importMechanic} onChange={e => setImportMechanic(e.target.value)}>
                   <option value="">— none —</option>
-                  {mechanics.map(n => <option key={n} value={n}>{n}</option>)}
+                  {mechanicNames.map(n => <option key={n} value={n}>{n}</option>)}
                 </select></label>
               <label className="field"><span>Issue date for rows without one (e.g. Xavier’s PD/EMS list)</span>
                 <input type="date" value={importDate} onChange={e => setImportDate(e.target.value)}/></label>
@@ -3613,7 +3638,7 @@ function MembershipsManager({ user, role, roster }) {
                         <td><input className="ticket-table-input" value={draft.name} onChange={e => setDraft({ ...draft, name: e.target.value })}/></td>
                         <td><input className="ticket-table-input" value={draft.cid} onChange={e => setDraft({ ...draft, cid: e.target.value })}/></td>
                         <td><select className="ticket-table-input" value={draft.type} onChange={e => setDraft({ ...draft, type: e.target.value })}>{MEMBERSHIP_TYPES.map(t => <option key={t} value={t}>{t}</option>)}</select></td>
-                        <td><select className="ticket-table-input" value={draft.mechanic} onChange={e => setDraft({ ...draft, mechanic: e.target.value })}><option value="">—</option>{mechanics.map(n => <option key={n} value={n}>{n}</option>)}</select></td>
+                        <td><select className="ticket-table-input" value={draft.mechanic} onChange={e => setDraft({ ...draft, mechanic: e.target.value })}><option value="">—</option>{mechanicNames.map(n => <option key={n} value={n}>{n}</option>)}</select></td>
                       </>
                     ) : (
                       <>
@@ -3751,6 +3776,7 @@ function AdminInner({ user, role }) {
 
   const titles = {
     roster:   { title: 'Manage the roster.', sub: 'Add, edit, or remove crew on the public /team page.' },
+    sellers:  { title: 'Mechanics & sellers.', sub: 'The roster of who can issue memberships, grouped by category — feeds the membership form’s category → name pickers.' },
     users:    { title: 'Manage users.',      sub: 'Create accounts, change roles, block, or remove access. Management-only.' },
     giveaway: { title: "Benny's launch giveaway (archived).", sub: "The launch-day raffle pools and spin-wheel draws. Kept here for records now that opening is done — issuance is off the public nav." },
     settings: { title: 'Settings.',          sub: 'Integrations and secrets. Admin-only — never visible to public visitors.' },
@@ -3772,6 +3798,7 @@ function AdminInner({ user, role }) {
 
         <div className="tabs tabs--main">
           <button className={`tab ${tab === 'roster'   ? 'is-on' : ''}`} onClick={() => setTab('roster')}>Roster</button>
+          <button className={`tab ${tab === 'sellers'  ? 'is-on' : ''}`} onClick={() => setTab('sellers')}>Sellers</button>
           {isManagement && <button className={`tab ${tab === 'users' ? 'is-on' : ''}`} onClick={() => setTab('users')}>Users</button>}
           <button className={`tab ${tab === 'settings' ? 'is-on' : ''}`} onClick={() => setTab('settings')}>Settings</button>
           {isManagement && <button className={`tab ${tab === 'audit' ? 'is-on' : ''}`} onClick={() => setTab('audit')}>Audit Log</button>}
@@ -3779,6 +3806,7 @@ function AdminInner({ user, role }) {
         </div>
 
         {tab === 'roster'   && <AdminRoster/>}
+        {tab === 'sellers'  && <AdminSellers/>}
         {tab === 'users'    && isManagement && <AdminUsers currentUser={user}/>}
         {tab === 'giveaway' && <AdminGiveaway/>}
         {tab === 'settings' && <AdminSettings/>}
@@ -3967,6 +3995,77 @@ function AdminSettings() {
         {sheetsStatus.state === 'err' && <span className="form-err">{sheetsStatus.msg}</span>}
       </div>
     </form>
+    </>
+  )
+}
+
+// Admin-managed roster of mechanics/sellers who can issue memberships, grouped
+// by category. Feeds the membership form's category → name pickers.
+function AdminSellers() {
+  const sellers = useSellers()
+  const [form, setForm] = useState({ category: '', name: '' })
+  const [status, setStatus] = useState({ state: 'idle', msg: '' })
+  const [busyId, setBusyId] = useState(null)
+
+  const categories = [...new Set(sellers.map(s => s.category || 'Uncategorized'))].sort()
+  const grouped = categories.map(c => ({ category: c, items: sellers.filter(s => (s.category || 'Uncategorized') === c) }))
+
+  const add = async e => {
+    e.preventDefault()
+    if (!form.name.trim()) { setStatus({ state: 'err', msg: 'Enter a name.' }); return }
+    const category = form.category.trim() || 'Uncategorized'
+    const name = form.name.trim()
+    if (sellers.some(s => s.name.toLowerCase() === name.toLowerCase() && (s.category || 'Uncategorized') === category)) {
+      setStatus({ state: 'err', msg: 'That name already exists in this category.' }); return
+    }
+    setStatus({ state: 'sending', msg: '' })
+    try {
+      await addDoc(collection(db, 'pitstop_sellers'), { name, category, createdAt: serverTimestamp() })
+      setForm(f => ({ category: f.category, name: '' }))   // keep category for fast repeat entry
+      setStatus({ state: 'ok', msg: 'Added.' })
+    } catch (err) { setStatus({ state: 'err', msg: 'Could not add: ' + (err.message || err.code) }) }
+  }
+
+  const remove = async s => {
+    if (!(await showConfirm({ title: 'Remove from roster?', message: `Remove ${s.name} (${s.category || 'Uncategorized'})?`, confirmLabel: 'Remove', danger: true }))) return
+    setBusyId(s.id)
+    try { await deleteDoc(doc(db, 'pitstop_sellers', s.id)) }
+    catch (err) { showToast('Delete failed: ' + (err.message || err.code), 'err') }
+    finally { setBusyId(null) }
+  }
+
+  return (
+    <>
+      <form className="form" onSubmit={add}>
+        <div className="form-row">
+          <label className="field"><span>Category</span>
+            <input list="seller-cats" value={form.category} onChange={e => setForm({ ...form, category: e.target.value })} placeholder="e.g. Benny's Mechanic"/>
+            <datalist id="seller-cats">{categories.map(c => <option key={c} value={c}/>)}</datalist>
+          </label>
+          <label className="field"><span>Name *</span>
+            <input value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Rico Martin"/></label>
+        </div>
+        <div className="form-foot">
+          <button className="btn btn--primary" type="submit" disabled={status.state === 'sending'}>{status.state === 'sending' ? 'Adding…' : 'Add to roster →'}</button>
+          {status.state === 'ok'  && <span className="form-ok">{status.msg}</span>}
+          {status.state === 'err' && <span className="form-err">{status.msg}</span>}
+        </div>
+      </form>
+
+      {grouped.length === 0 && <div className="empty">No mechanics/sellers yet. Add them above — or paste the roster and I&apos;ll seed it.</div>}
+      {grouped.map(g => (
+        <div key={g.category} style={{ marginBottom: '1.2rem' }}>
+          <div className="log-list-h">{g.category} · {g.items.length}</div>
+          <div className="seller-chips">
+            {g.items.map(s => (
+              <span key={s.id} className="seller-chip">
+                {s.name}
+                <button className="seller-chip-x" onClick={() => remove(s)} disabled={busyId === s.id} title="Remove">×</button>
+              </span>
+            ))}
+          </div>
+        </div>
+      ))}
     </>
   )
 }

@@ -90,6 +90,13 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
+    // Mechanics/sellers roster — who can issue memberships, grouped by category.
+    // Read by the staff who use the membership form; managed by admins.
+    match /pitstop_sellers/{doc} {
+      allow read: if isStaff() || (signedIn() && userRole() in ['membership', 'bennys']);
+      allow create, update, delete: if isAdmin();
+    }
+
     // Site config (pricing, taglines, location). Admin-only writes.
     match /pitstop_config/{doc} {
       allow read:  if true;

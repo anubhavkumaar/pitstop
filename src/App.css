@@ -1730,6 +1730,23 @@ select:focus { outline: none; border-color: var(--brand); }
 .mem-stafflink { color: var(--brand); font-weight: 600; }
 .mem-stafflink:hover { text-decoration: underline; }
 
+/* Sellers roster chips (Admin → Sellers) */
+.seller-chips { display: flex; flex-wrap: wrap; gap: .5rem; }
+.seller-chip {
+  display: inline-flex; align-items: center; gap: .4rem;
+  padding: .35rem .5rem .35rem .7rem; border-radius: 999px;
+  background: var(--carbon-2); border: 1px solid var(--border-2);
+  font-size: .85rem; color: var(--t1);
+}
+.seller-chip-x {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; border-radius: 999px;
+  background: rgba(230,57,70,.12); color: var(--brand);
+  font-size: 1rem; line-height: 1; cursor: pointer; border: none;
+}
+.seller-chip-x:hover:not(:disabled) { background: var(--brand); color: #fff; }
+.seller-chip-x:disabled { opacity: .4; cursor: default; }
+
 .giveaway-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 1.2rem; margin-bottom: 2rem; }
 .giveaway-pool { gap: .2rem; }
 .giveaway-pool-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .6rem; margin-bottom: .4rem; }

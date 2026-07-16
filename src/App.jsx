@@ -3317,7 +3317,8 @@ function MembershipsManager({ user, role, roster }) {
   const [importing, setImporting] = useState(false)
   const [, setTick] = useState(0)                       // 60s heartbeat so status stays live
   const nameRef = useRef(null)
-  const canAdmin = isAdmin(user, role)                  // import / renew / delete are admin+management only
+  const canAdmin = isAdmin(user, role)                  // import + delete: admin/management
+  const canManage = canManageEntries(user, role)        // renew: management only
   const mechanics = roster.map(m => m.name)
   const previewRows = parseMembershipLog(importText)
 
@@ -3633,7 +3634,7 @@ function MembershipsManager({ user, role, roster }) {
                         </>
                       ) : (
                         <>
-                          {canAdmin && <button className="btn btn--primary btn--sm" onClick={() => renew(m)} disabled={busyId === m.id}>Renew</button>}
+                          {canManage && <button className="btn btn--primary btn--sm" onClick={() => renew(m)} disabled={busyId === m.id}>Renew</button>}
                           <button className="btn btn--ghost btn--sm" onClick={() => startEdit(m)} disabled={busyId === m.id}>Edit</button>
                           {canAdmin && <button className="btn btn--del btn--sm" onClick={() => remove(m)} disabled={busyId === m.id}>{busyId === m.id ? '…' : 'Delete'}</button>}
                         </>

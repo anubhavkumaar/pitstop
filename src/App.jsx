@@ -3999,6 +3999,66 @@ function AdminSettings() {
   )
 }
 
+// Benny's staff roster (category = rank), from the ops sheet. Seeded once via
+// the "Load from staff roster" button; idempotent — skips any name already in
+// the same category.
+const SELLERS_SEED = [
+  { category: 'CEO', name: 'Masoom Shayar' },
+  { category: 'COO - Boss Lady', name: 'Zara Hayat' },
+  { category: 'Managing Partners', name: 'Keith Porter' },
+  { category: 'Managing Partners', name: 'JoyRaj Bakshi' },
+  { category: 'Managing Partners', name: 'Tyson Nash' },
+  { category: 'Managing Partners', name: 'Shane Klebitz' },
+  { category: 'Managing Partners', name: 'Ken Richman' },
+  { category: 'Legal Advisor', name: 'Jax Blackwood' },
+  { category: 'Master Mechanic', name: 'Ajax Miles' },
+  { category: 'Lead Mechanic', name: 'Xavier Johnson' },
+  { category: 'Lead Mechanic', name: 'Sandy Guzman' },
+  { category: 'Lead Mechanic', name: 'Luke William' },
+  { category: 'Lead Mechanic', name: 'Aadi Sayal' },
+  { category: 'Lead Mechanic', name: 'Rico Martin' },
+  { category: 'Lead Mechanic', name: 'Azzy Scott' },
+  { category: 'Lead Mechanic', name: 'Arohi Kashyap' },
+  { category: 'Lead Mechanic', name: 'Esha Goyal' },
+  { category: 'Lead Mechanic', name: 'Wasim Khan' },
+  { category: 'Lead Mechanic', name: 'Ghosty Zean' },
+  { category: 'Lead Mechanic', name: 'Halaku Khan' },
+  { category: 'Lead Mechanic', name: 'King Sincair' },
+  { category: 'Lead Mechanic', name: 'Fahad Al Qhatani' },
+  { category: 'Lead Mechanic', name: 'Zoro' },
+  { category: 'Lead Mechanic', name: 'Alison Sinclair' },
+  { category: 'Senior Mechanic', name: 'Carry Sins' },
+  { category: 'Senior Mechanic', name: 'Lil Mon' },
+  { category: 'Senior Mechanic', name: 'Frank Williams' },
+  { category: 'Senior Mechanic', name: 'Shiva Patil' },
+  { category: 'Senior Mechanic', name: 'Yosuf Pasha' },
+  { category: 'Senior Mechanic', name: 'Sebastian Morgan' },
+  { category: 'Senior Mechanic', name: 'Shanky Sharma' },
+  { category: 'Senior Mechanic', name: 'Perry Kapoor' },
+  { category: 'Mechanic', name: 'Salim Chopper' },
+  { category: 'Mechanic', name: 'Raghu Singh' },
+  { category: 'Mechanic', name: 'Nick Patel' },
+  { category: 'Mechanic', name: 'Prem Jordar' },
+  { category: 'Mechanic', name: 'Harsh pandit' },
+  { category: 'Mechanic', name: 'Aafat Albeli' },
+  { category: 'Mechanic', name: 'Justin Evans' },
+  { category: 'Mechanic', name: 'Thomas Shelby' },
+  { category: 'Mechanic', name: 'Aarav Mehta' },
+  { category: 'Mechanic', name: 'Jai Verma' },
+  { category: 'Mechanic', name: 'Ojas Gambheera' },
+  { category: 'Mechanic', name: 'Lucifer Decall' },
+  { category: 'Mechanic', name: 'Rio Vespucci' },
+  { category: 'Mechanic', name: 'Nino Singh' },
+  { category: 'Mechanic', name: 'Rhyan Salvatore' },
+  { category: 'Mechanic', name: 'Dean Jones' },
+  { category: 'Mechanic', name: 'Miyako Hara' },
+  { category: 'Trainee', name: 'Dev Adlakha' },
+  { category: 'Trainee', name: 'Tarzan Gulati' },
+  { category: 'Trainee', name: 'Krishna Meena' },
+  { category: 'Trainee', name: 'Rinku Bhatt' },
+  { category: 'Trainee', name: 'Tim Diggins' },
+]
+
 // Admin-managed roster of mechanics/sellers who can issue memberships, grouped
 // by category. Feeds the membership form's category → name pickers.
 function AdminSellers() {
@@ -4006,6 +4066,22 @@ function AdminSellers() {
   const [form, setForm] = useState({ category: '', name: '' })
   const [status, setStatus] = useState({ state: 'idle', msg: '' })
   const [busyId, setBusyId] = useState(null)
+  const [seeding, setSeeding] = useState(false)
+
+  const seedKey = s => `${(s.category || 'Uncategorized').toLowerCase()}|${(s.name || '').trim().toLowerCase()}`
+  const seedFromSheet = async () => {
+    if (seeding) return
+    const have = new Set(sellers.map(seedKey))
+    const fresh = SELLERS_SEED.filter(s => !have.has(seedKey(s)))
+    if (fresh.length === 0) { showToast('Staff roster already loaded.', 'ok'); return }
+    if (!(await showConfirm({ title: 'Load staff roster?', message: `Adds ${fresh.length} people from the ops sheet, grouped by rank. Anyone already in the roster is skipped.`, confirmLabel: 'Load roster' }))) return
+    setSeeding(true)
+    try {
+      for (const s of fresh) await addDoc(collection(db, 'pitstop_sellers'), { name: s.name, category: s.category, createdAt: serverTimestamp() })
+      showToast(`Loaded ${fresh.length} into the roster.`, 'ok')
+    } catch (err) { showToast('Load failed: ' + (err.message || err.code), 'err') }
+    finally { setSeeding(false) }
+  }
 
   const categories = [...new Set(sellers.map(s => s.category || 'Uncategorized'))].sort()
   const grouped = categories.map(c => ({ category: c, items: sellers.filter(s => (s.category || 'Uncategorized') === c) }))
@@ -4047,6 +4123,7 @@ function AdminSellers() {
         </div>
         <div className="form-foot">
           <button className="btn btn--primary" type="submit" disabled={status.state === 'sending'}>{status.state === 'sending' ? 'Adding…' : 'Add to roster →'}</button>
+          <button className="btn btn--ghost btn--sm" type="button" onClick={seedFromSheet} disabled={seeding}>{seeding ? 'Loading…' : 'Load from staff roster'}</button>
           {status.state === 'ok'  && <span className="form-ok">{status.msg}</span>}
           {status.state === 'err' && <span className="form-err">{status.msg}</span>}
         </div>

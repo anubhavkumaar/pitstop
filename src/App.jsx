@@ -631,6 +631,7 @@ function Nav() {
     { to: '/',         label: 'Home' },
     { to: '/services', label: 'Services' },
     { to: '/work-log', label: 'Work Log' },
+    { to: '/memberships', label: 'Memberships' },
     { to: '/reviews',  label: 'Reviews' },
     { to: '/gallery',  label: 'Gallery' },
     { to: '/team',     label: 'Crew' },
@@ -641,7 +642,6 @@ function Nav() {
   // The signed-in side of the nav grows with whatever this account can
   // actually do — a crew login sees nothing extra, an admin sees everything.
   const roleLinks = (loaded && user) ? [
-    canMemberTokens(user, role) && { to: '/memberships', label: 'Memberships' },
     isAdmin(user, role)         && { to: '/admin',  label: 'Admin' },
     // Launch giveaway (Benny's/Soochi/Membership/PD/EMS ticket pools + draws) is
     // archived post-opening — still reachable by direct URL, just out of the nav.
@@ -3203,46 +3203,100 @@ function parseMembershipLog(text) {
 function MembershipsPage() {
   const { user, role, loaded } = useAuth()
   const roster = useRoster()
-  const [email, setEmail] = useState('')
-  const [pw, setPw] = useState('')
-  const [authErr, setAuthErr] = useState('')
+  if (!loaded || (user && role === undefined)) return <main className="page"><div className="loading">Loading…</div></main>
+  // Staff who can manage memberships get the full editor; everyone else (public
+  // or a signed-in non-member account) gets the read-only register.
+  if (user && canMemberTokens(user, role)) return <MembershipsManager user={user} role={role} roster={roster}/>
+  return <MembershipsPublic user={user}/>
+}
 
-  const submitLogin = async e => {
-    e.preventDefault(); setAuthErr('')
-    try { await signInWithEmailAndPassword(auth, email, pw) }
-    catch { setAuthErr('Wrong email or password.') }
-  }
+// Public, read-only view of the register — like the work log, anyone can look up
+// whether a Citizen ID's membership is still active; nobody can change anything.
+function MembershipsPublic({ user }) {
+  const [list, setList] = useState([])
+  const [filter, setFilter] = useState('all')
+  const [typeFilter, setTypeFilter] = useState('all')
+  const [search, setSearch] = useState('')
+  const [, setTick] = useState(0)
 
-  if (!loaded) return <main className="page"><div className="loading">Loading…</div></main>
-  if (!user) return (
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'pitstop_memberships'),
+      snap => {
+        const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+        docs.sort((a, b) => (b.issuedAt?.seconds ?? 0) - (a.issuedAt?.seconds ?? 0))
+        setList(docs)
+      },
+      err => console.error('[memberships] read failed:', err))
+    return unsub
+  }, [])
+  useEffect(() => { const id = setInterval(() => setTick(t => t + 1), 60000); return () => clearInterval(id) }, [])
+
+  const activeCount  = list.filter(m => !membershipStatus(m).expired).length
+  const expiredCount = list.length - activeCount
+  const q = search.trim().toLowerCase()
+  const filtered = list.filter(m => {
+    const s = membershipStatus(m)
+    if (filter === 'active' && s.expired) return false
+    if (filter === 'expired' && !s.expired) return false
+    if (typeFilter !== 'all' && (m.type || '') !== typeFilter) return false
+    if (q && !(`${m.name || ''} ${m.cid || ''}`.toLowerCase().includes(q))) return false
+    return true
+  })
+
+  return (
     <main className="page">
-      <GiveawayPageHeader kicker="Memberships" title="Sign in.">Staff access only.</GiveawayPageHeader>
-      <section className="section section--narrow">
-        <form className="form" onSubmit={submitLogin}>
-          <label className="field"><span>Email</span>
-            <input value={email} onChange={e => setEmail(e.target.value)} type="email" placeholder="you@pitstop.gg"/></label>
-          <label className="field"><span>Password</span>
-            <input value={pw} onChange={e => setPw(e.target.value)} type="password" placeholder="••••••••"/></label>
-          <div className="form-foot">
-            <button className="btn btn--primary" type="submit">Sign in</button>
-            {authErr && <span className="form-err">{authErr}</span>}
-          </div>
-        </form>
-      </section>
-    </main>
-  )
-  if (role === undefined) return <main className="page"><div className="loading">Loading…</div></main>
-  if (!canMemberTokens(user, role)) return (
-    <main className="page">
-      <GiveawayPageHeader kicker="Memberships" title="Not authorized.">
-        Signed in as <b>{user.email}</b>, but this account can&apos;t manage memberships.
+      <GiveawayPageHeader kicker="Memberships" title="Membership status.">
+        Look up whether a membership is still active — search by name or Citizen ID. Every Pit Stop membership is valid for {MEMBERSHIP_DAYS} days from its issue date.
       </GiveawayPageHeader>
-      <section className="section section--narrow center">
-        <button className="btn btn--ghost" onClick={() => signOut(auth)}>Sign out</button>
+      <section className="section">
+        <div className="mem-controls">
+          <input className="mem-search" value={search} onChange={e => setSearch(e.target.value)} placeholder="Search name or Citizen ID…"/>
+          <div className="chips">
+            {[['all', `All · ${list.length}`], ['active', `Active · ${activeCount}`], ['expired', `Expired · ${expiredCount}`]].map(([k, lbl]) => (
+              <button type="button" key={k} className={`chip ${filter === k ? 'chip--on' : ''}`} onClick={() => setFilter(k)}>{lbl}</button>
+            ))}
+          </div>
+          <select className="mem-select" value={typeFilter} onChange={e => setTypeFilter(e.target.value)}>
+            <option value="all">All types</option>
+            {MEMBERSHIP_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
+        </div>
+        <div className="mem-count">
+          Showing {filtered.length} of {list.length}
+          {!user && <> · <Link to="/staff" className="mem-stafflink">Staff sign in →</Link></>}
+        </div>
+        <div className="ticket-table-wrap">
+          <table className="ticket-table">
+            <thead>
+              <tr><th>#</th><th>Name</th><th>Citizen ID</th><th>Type</th><th>Issued</th><th>Expires</th><th>Status</th></tr>
+            </thead>
+            <tbody>
+              {filtered.length === 0 && <tr><td colSpan={7} className="empty">No memberships found.</td></tr>}
+              {filtered.map((m, i) => {
+                const s = membershipStatus(m)
+                const start = membershipStart(m)
+                const badge = s.pending ? ['new', 'Pending…']
+                  : s.expired            ? ['cancelled', `Expired · ${Math.abs(s.daysLeft)}d ago`]
+                  : s.daysLeft <= 3      ? ['new', `Expiring · ${s.daysLeft}d left`]
+                  :                        ['accepted', `Active · ${s.daysLeft}d left`]
+                return (
+                  <tr key={m.id}>
+                    <td>{i + 1}</td>
+                    <td className="wrap">{m.name}</td>
+                    <td>{m.cid || '—'}</td>
+                    <td>{m.type || '—'}</td>
+                    <td className="ticket-table-time">{fmtDay(start)}</td>
+                    <td className="ticket-table-time">{fmtDay(s.expiresAt)}</td>
+                    <td><span className={`status status--${badge[0]}`}>{badge[1]}</span></td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
       </section>
     </main>
   )
-  return <MembershipsManager user={user} role={role} roster={roster}/>
 }
 
 function MembershipsManager({ user, role, roster }) {

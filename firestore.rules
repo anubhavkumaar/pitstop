@@ -160,8 +160,9 @@ service cloud.firestore {
     // in place). Issued/managed by the same people as the old membership tickets
     // (admins + membership/bennys crew); deleting a record is management-only.
     match /pitstop_memberships/{doc} {
-      allow read: if isStaff()
-        || (signedIn() && userRole() in ['membership', 'bennys']);
+      // Public register (like the work log) — anyone can look up membership
+      // status; only staff can write.
+      allow read: if true;
       // Mechanics (membership/bennys) can add + edit; renew/import are gated to
       // admins in the UI. Deleting a record is admin/management only.
       allow create, update: if isAdmin()

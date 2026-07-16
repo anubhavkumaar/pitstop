@@ -3259,6 +3259,7 @@ function MembershipsManager({ user, role, roster }) {
   const [importText, setImportText] = useState('')
   const [importMechanic, setImportMechanic] = useState('')
   const [importDate, setImportDate] = useState('')      // fallback issue date for rows with none
+  const [importOverwrite, setImportOverwrite] = useState(false)   // update CIDs already in the register
   const [importing, setImporting] = useState(false)
   const [, setTick] = useState(0)                       // 60s heartbeat so status stays live
   const nameRef = useRef(null)
@@ -3337,15 +3338,18 @@ function MembershipsManager({ user, role, roster }) {
     for (const r of parsed) if (r.cid) byCid.set(r.cid, r)
     const rows = [...byCid.values()]
     const have = new Set(list.map(m => (m.cid || '').trim()).filter(Boolean))
-    const fresh = rows.filter(r => !have.has(r.cid))
-    const skipped = rows.length - fresh.length
-    if (fresh.length === 0) { showToast('All parsed entries already exist (by Citizen ID).', 'ok'); return }
+    const overlap = rows.filter(r => have.has(r.cid)).length
+    const fresh = importOverwrite ? rows : rows.filter(r => !have.has(r.cid))
+    if (fresh.length === 0) { showToast('All parsed entries already exist — tick “Overwrite existing” to update them.', 'ok'); return }
     const noDate = fresh.filter(r => !r.date).length
     const fallback = importDate ? new Date(`${importDate}T12:00:00`) : null
     const dateNote = noDate === 0 ? 'All have an issue date.'
       : fallback ? `${noDate} have no date → set to ${importDate}.`
       : `${noDate} have no date → will start ${MEMBERSHIP_DAYS} days from now (set a fallback date to fix this).`
-    if (!(await showConfirm({ title: `Import ${fresh.length} membership(s)?`, message: `Parsed ${parsed.length} line(s) → ${rows.length} unique, ${fresh.length} new${skipped ? `, ${skipped} already in the register` : ''}. ${dateNote}`, confirmLabel: 'Import' }))) return
+    const countNote = importOverwrite
+      ? `${rows.length} unique (${rows.length - overlap} new, ${overlap} overwritten)`
+      : `${rows.length} unique, ${fresh.length} new${overlap ? `, ${overlap} already in the register (skipped)` : ''}`
+    if (!(await showConfirm({ title: `Import ${fresh.length} membership(s)?`, message: `Parsed ${parsed.length} line(s) → ${countNote}. ${dateNote}`, confirmLabel: 'Import' }))) return
     setImporting(true)
     try {
       for (const r of fresh) {
@@ -3356,7 +3360,7 @@ function MembershipsManager({ user, role, roster }) {
         })
       }
       setImportText(''); setShowImport(false)
-      showToast(`Imported ${fresh.length}${skipped ? `, skipped ${skipped}` : ''}.`, 'ok')
+      showToast(`Imported ${fresh.length} membership${fresh.length === 1 ? '' : 's'}${importOverwrite && overlap ? ` (${overlap} updated)` : ''}.`, 'ok')
     } catch (err) { showToast('Import failed: ' + (err.message || err.code), 'err') }
     finally { setImporting(false) }
   }
@@ -3501,10 +3505,14 @@ function MembershipsManager({ user, role, roster }) {
               <label className="field"><span>Issue date for rows without one (e.g. Xavier’s PD/EMS list)</span>
                 <input type="date" value={importDate} onChange={e => setImportDate(e.target.value)}/></label>
             </div>
-            <div className="form-foot">
+            <div className="form-foot" style={{ alignItems: 'center' }}>
               <button type="button" className="btn btn--primary" onClick={doImportPaste} disabled={importing || previewRows.length === 0}>
                 {importing ? 'Importing…' : `Import ${previewRows.length || ''} detected →`}
               </button>
+              <label className="mem-check">
+                <input type="checkbox" checked={importOverwrite} onChange={e => setImportOverwrite(e.target.checked)}/>
+                <span>Overwrite existing (update entries already in the register)</span>
+              </label>
             </div>
             <div className="t3">{previewRows.length} entr{previewRows.length === 1 ? 'y' : 'ies'} detected · parses names, Citizen IDs, type, seller, and date. Duplicates (by Citizen ID) are merged/skipped; issue dates are preserved where present, and undated rows use the date above.</div>
           </div>

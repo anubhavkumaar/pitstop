@@ -1725,6 +1725,8 @@ select:focus { outline: none; border-color: var(--brand); }
 }
 .mem-controls .chips { margin: 0; }
 .mem-count { font-size: .78rem; color: var(--t3); margin-bottom: .6rem; }
+.mem-check { display: inline-flex; align-items: center; gap: .45rem; font-size: .82rem; color: var(--t2); cursor: pointer; }
+.mem-check input { width: 15px; height: 15px; accent-color: var(--brand); cursor: pointer; }
 
 .giveaway-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 1.2rem; margin-bottom: 2rem; }
 .giveaway-pool { gap: .2rem; }

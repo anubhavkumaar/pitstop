@@ -18,12 +18,15 @@ jobs:
           firebaseServiceAccount: ${{ secrets.FIREBASE_SERVICE_ACCOUNT_PITSTOP_SERVICES }}
           channelId: live
           projectId: pitstop-services
-      # action-hosting-deploy only ships Hosting, so deploy the security rules
-      # (Firestore + Storage) separately with the same service account.
-      - name: Deploy Firestore & Storage rules
+      # action-hosting-deploy only ships Hosting, so deploy the Firestore rules
+      # separately with the same service account. NOTE: deliberately NOT deploying
+      # storage — Firebase Storage isn't set up on this project, and including it
+      # made the whole command fail, so the Firestore rules never deployed. Re-add
+      # ",storage" here only after enabling Storage in the Firebase console.
+      - name: Deploy Firestore rules
         env:
           GOOGLE_APPLICATION_CREDENTIALS: ${{ runner.temp }}/firebase-sa.json
         run: |
           printf '%s' '${{ secrets.FIREBASE_SERVICE_ACCOUNT_PITSTOP_SERVICES }}' > "$GOOGLE_APPLICATION_CREDENTIALS"
-          npx firebase-tools deploy --only firestore:rules,storage --project pitstop-services --non-interactive
+          npx firebase-tools deploy --only firestore:rules --project pitstop-services --non-interactive
           rm -f "$GOOGLE_APPLICATION_CREDENTIALS"

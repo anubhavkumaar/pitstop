@@ -156,6 +156,17 @@ service cloud.firestore {
       allow update, delete: if false;
     }
 
+    // Memberships register — real, ongoing memberships (14-day validity, renewed
+    // in place). Issued/managed by the same people as the old membership tickets
+    // (admins + membership/bennys crew); deleting a record is management-only.
+    match /pitstop_memberships/{doc} {
+      allow read: if isStaff()
+        || (signedIn() && userRole() in ['membership', 'bennys']);
+      allow create, update: if isAdmin()
+        || (signedIn() && userRole() in ['membership', 'bennys']);
+      allow delete: if isManagementOnly();
+    }
+
     // Default deny — anything not matched above is rejected.
     match /{document=**} {
       allow read, write: if false;

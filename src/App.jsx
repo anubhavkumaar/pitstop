@@ -641,12 +641,10 @@ function Nav() {
   // The signed-in side of the nav grows with whatever this account can
   // actually do — a crew login sees nothing extra, an admin sees everything.
   const roleLinks = (loaded && user) ? [
-    canRepairTokens(user, role) && { to: '/bennys', label: "Benny's" },
-    canFoodTokens(user, role)   && { to: '/soochi', label: 'Soochi' },
-    canMemberTokens(user, role) && { to: '/membership', label: 'Membership' },
-    canPdEmsTokens(user, role)  && { to: '/pd',  label: 'PD' },
-    canPdEmsTokens(user, role)  && { to: '/ems', label: 'EMS' },
+    canMemberTokens(user, role) && { to: '/memberships', label: 'Memberships' },
     isAdmin(user, role)         && { to: '/admin',  label: 'Admin' },
+    // Launch giveaway (Benny's/Soochi/Membership/PD/EMS ticket pools + draws) is
+    // archived post-opening — still reachable by direct URL, just out of the nav.
   ].filter(Boolean) : []
 
   return (
@@ -2347,17 +2345,8 @@ function PortalDashboard({ user, role }) {
     { to: '?view=reviews',  icon: IconStar,    title: 'Reviews',    desc: 'Moderate customer reviews before they go public.', staffNav: true },
     { to: '/work-log',      icon: IconCash,    title: 'Work Log',   desc: 'Log completed jobs — evidence, billing, who handled it.' },
     { to: '/gallery',       icon: IconCamera,  title: 'Gallery',    desc: 'Post photos of finished cars for the public site.' },
-    canRepairTokens(user, role) && { to: '/bennys', icon: IconWrench, title: "Benny's Tickets", desc: 'Issue a giveaway ticket per paid repair.' },
-    canFoodTokens(user, role)   && { to: '/soochi', icon: IconWash,   title: 'Soochi Tickets',   desc: 'Add a giveaway ticket per meal sold.' },
-    canMemberTokens(user, role) && { to: '/membership', icon: IconStar, title: 'Membership Tickets', desc: 'Add a giveaway ticket per membership sold.' },
-    canPdEmsTokens(user, role) && { to: '/pd',  icon: IconStar, title: 'PD Tickets',  desc: 'Add a giveaway ticket per PD membership.' },
-    canPdEmsTokens(user, role) && { to: '/ems', icon: IconStar, title: 'EMS Tickets', desc: 'Add a giveaway ticket per EMS membership.' },
-    isAdmin(user, role) && { to: '/admin', icon: IconUpgrade, title: 'Admin Panel', desc: 'Roster, users, the giveaway, and settings.' },
-    isAdmin(user, role) && { to: '/repair-draw', icon: IconGauge, title: 'Repair Lucky Draw', desc: 'Live spin, stream-ready.', external: true },
-    isAdmin(user, role) && { to: '/soochi-draw', icon: IconGauge, title: 'Soochi Lucky Draw', desc: 'Live spin, stream-ready.', external: true },
-    isAdmin(user, role) && { to: '/membership-draw', icon: IconGauge, title: 'Membership Lucky Draw', desc: 'Live spin, stream-ready.', external: true },
-    isAdmin(user, role) && { to: '/pd-draw',  icon: IconGauge, title: 'PD Lucky Draw',  desc: 'Live spin, stream-ready.', external: true },
-    isAdmin(user, role) && { to: '/ems-draw', icon: IconGauge, title: 'EMS Lucky Draw', desc: 'Live spin, stream-ready.', external: true },
+    canMemberTokens(user, role) && { to: '/memberships', icon: IconStar, title: 'Memberships', desc: 'Issue, renew, and track 14-day memberships.' },
+    isAdmin(user, role) && { to: '/admin', icon: IconUpgrade, title: 'Admin Panel', desc: 'Roster, users, memberships, and settings.' },
   ].filter(Boolean)
 
   return (
@@ -3104,6 +3093,378 @@ function EmsPage() {
   )
 }
 
+/* ─── MEMBERSHIPS (14-day, renewable, mechanic-attributed) ──── */
+
+const MEMBERSHIP_DAYS = 14
+const DAY_MS = 24 * 60 * 60 * 1000
+const MEMBERSHIP_TYPES = ['Gold', 'Pink', 'Blue', 'PSM', 'PD', 'EMS']
+
+function membershipStart(m) {
+  if (m.issuedAt?.toDate) return m.issuedAt.toDate().getTime()
+  if (m.issuedAt?.seconds) return m.issuedAt.seconds * 1000
+  return null
+}
+// No backend cron exists, so validity is derived from the issue date on every
+// render (a 60s tick keeps it live). A membership expires MEMBERSHIP_DAYS after
+// its current issue date; renewing just moves that date to now.
+function membershipStatus(m) {
+  const start = membershipStart(m)
+  if (start == null) return { pending: true, expired: false, daysLeft: null, expiresAt: null }
+  const expiresAt = start + MEMBERSHIP_DAYS * DAY_MS
+  const msLeft = expiresAt - Date.now()
+  return { pending: false, expired: msLeft <= 0, daysLeft: Math.ceil(msLeft / DAY_MS), expiresAt }
+}
+function fmtDay(ms) {
+  return ms == null ? '—' : new Date(ms).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' })
+}
+
+function normalizeMembershipType(t) {
+  if (!t) return ''
+  return MEMBERSHIP_TYPES.find(x => x.toUpperCase() === t.toUpperCase()) || ''
+}
+// Best-effort parser for bulk-pasted lines (e.g. copied from a Discord channel).
+// Pulls a name, a 1–6 digit Citizen ID, and an optional type keyword from each
+// line, tolerating leading "1." / "1)" numbering and trailing punctuation.
+const MEMBERSHIP_TYPE_RE = new RegExp(`\\b(${MEMBERSHIP_TYPES.join('|')})\\b`, 'i')
+function parseMembershipLines(text) {
+  const rows = []
+  for (const raw of (text || '').split('\n')) {
+    const line = raw.trim().replace(/^\d+[).]\s*/, '').replace(/^[-•*]\s*/, '')
+    if (!line) continue
+    const cid = line.match(/\b(\d{1,6})\b/)
+    if (!cid) continue
+    const typeM = line.match(MEMBERSHIP_TYPE_RE)
+    let name = line.slice(0, cid.index).trim().replace(/[,\-–—]\s*$/, '').trim()
+    if (typeM) name = name.replace(MEMBERSHIP_TYPE_RE, '').trim()
+    name = name.replace(/[(),\-–—]+$/, '').trim()
+    if (!name) continue
+    rows.push({ name, cid: cid[1], type: normalizeMembershipType(typeM ? typeM[1] : '') })
+  }
+  return rows
+}
+
+function MembershipsPage() {
+  const { user, role, loaded } = useAuth()
+  const roster = useRoster()
+  const [email, setEmail] = useState('')
+  const [pw, setPw] = useState('')
+  const [authErr, setAuthErr] = useState('')
+
+  const submitLogin = async e => {
+    e.preventDefault(); setAuthErr('')
+    try { await signInWithEmailAndPassword(auth, email, pw) }
+    catch { setAuthErr('Wrong email or password.') }
+  }
+
+  if (!loaded) return <main className="page"><div className="loading">Loading…</div></main>
+  if (!user) return (
+    <main className="page">
+      <GiveawayPageHeader kicker="Memberships" title="Sign in.">Staff access only.</GiveawayPageHeader>
+      <section className="section section--narrow">
+        <form className="form" onSubmit={submitLogin}>
+          <label className="field"><span>Email</span>
+            <input value={email} onChange={e => setEmail(e.target.value)} type="email" placeholder="you@pitstop.gg"/></label>
+          <label className="field"><span>Password</span>
+            <input value={pw} onChange={e => setPw(e.target.value)} type="password" placeholder="••••••••"/></label>
+          <div className="form-foot">
+            <button className="btn btn--primary" type="submit">Sign in</button>
+            {authErr && <span className="form-err">{authErr}</span>}
+          </div>
+        </form>
+      </section>
+    </main>
+  )
+  if (role === undefined) return <main className="page"><div className="loading">Loading…</div></main>
+  if (!canMemberTokens(user, role)) return (
+    <main className="page">
+      <GiveawayPageHeader kicker="Memberships" title="Not authorized.">
+        Signed in as <b>{user.email}</b>, but this account can&apos;t manage memberships.
+      </GiveawayPageHeader>
+      <section className="section section--narrow center">
+        <button className="btn btn--ghost" onClick={() => signOut(auth)}>Sign out</button>
+      </section>
+    </main>
+  )
+  return <MembershipsManager user={user} role={role} roster={roster}/>
+}
+
+function MembershipsManager({ user, role, roster }) {
+  const [list, setList] = useState([])
+  const [form, setForm] = useState({ name: '', cid: '', type: 'Gold', mechanic: '' })
+  const [status, setStatus] = useState({ state: 'idle', msg: '' })
+  const [filter, setFilter] = useState('all')          // all | active | expired
+  const [busyId, setBusyId] = useState(null)
+  const [editingId, setEditingId] = useState(null)
+  const [draft, setDraft] = useState({ name: '', cid: '', type: 'Gold', mechanic: '' })
+  const [showImport, setShowImport] = useState(false)
+  const [importText, setImportText] = useState('')
+  const [importMechanic, setImportMechanic] = useState('')
+  const [importing, setImporting] = useState(false)
+  const [, setTick] = useState(0)                       // 60s heartbeat so status stays live
+  const nameRef = useRef(null)
+  const canManage = canManageEntries(user, role)
+  const mechanics = roster.map(m => m.name)
+  const previewRows = parseMembershipLines(importText)
+
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, 'pitstop_memberships'),
+      snap => {
+        const docs = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+        docs.sort((a, b) => (b.issuedAt?.seconds ?? 0) - (a.issuedAt?.seconds ?? 0))
+        setList(docs)
+      },
+      err => console.error('[memberships] read failed:', err))
+    return unsub
+  }, [])
+  useEffect(() => { const id = setInterval(() => setTick(t => t + 1), 60000); return () => clearInterval(id) }, [])
+
+  const issue = async e => {
+    e.preventDefault()
+    if (!form.name.trim()) { setStatus({ state: 'err', msg: 'Enter a name.' }); return }
+    if (!form.cid.trim())  { setStatus({ state: 'err', msg: 'Enter a Citizen ID.' }); return }
+    if (!form.mechanic)    { setStatus({ state: 'err', msg: 'Select the mechanic who issued it.' }); return }
+    setStatus({ state: 'sending', msg: '' })
+    try {
+      await addDoc(collection(db, 'pitstop_memberships'), {
+        name: form.name.trim(), cid: form.cid.trim(), type: form.type, mechanic: form.mechanic,
+        issuedAt: serverTimestamp(), createdAt: serverTimestamp(),
+        issuedByUid: user.uid, issuedByLabel: user.email,
+        renewCount: 0, lastRenewedAt: null,
+      })
+      setForm(f => ({ name: '', cid: '', type: f.type, mechanic: f.mechanic }))   // keep type + mechanic for fast repeat entry
+      setStatus({ state: 'ok', msg: `Membership added — valid ${MEMBERSHIP_DAYS} days.` })
+      nameRef.current?.focus()
+    } catch (err) { setStatus({ state: 'err', msg: 'Could not save: ' + (err.message || err.code) }) }
+  }
+
+  const renew = async m => {
+    if (!(await showConfirm({ title: 'Renew membership?', message: `Start a fresh ${MEMBERSHIP_DAYS} days for ${m.name}?`, confirmLabel: 'Renew' }))) return
+    setBusyId(m.id)
+    try {
+      await updateDoc(doc(db, 'pitstop_memberships', m.id), { issuedAt: serverTimestamp(), renewCount: (m.renewCount || 0) + 1, lastRenewedAt: serverTimestamp() })
+      showToast(`${m.name} renewed — ${MEMBERSHIP_DAYS} more days.`, 'ok')
+    } catch (err) { showToast('Renew failed: ' + (err.message || err.code), 'err') }
+    finally { setBusyId(null) }
+  }
+
+  const remove = async m => {
+    if (!(await showConfirm({ title: 'Delete membership?', message: `Remove ${m.name}'s membership record entirely?`, confirmLabel: 'Delete', danger: true }))) return
+    setBusyId(m.id)
+    try { await deleteDoc(doc(db, 'pitstop_memberships', m.id)) }
+    catch (err) { showToast('Delete failed: ' + (err.message || err.code), 'err') }
+    finally { setBusyId(null) }
+  }
+
+  const startEdit = m => { setEditingId(m.id); setDraft({ name: m.name || '', cid: m.cid || '', type: m.type || 'Gold', mechanic: m.mechanic || '' }) }
+  const saveEdit = async m => {
+    if (!draft.name.trim() || !draft.cid.trim()) return
+    setBusyId(m.id)
+    try { await updateDoc(doc(db, 'pitstop_memberships', m.id), { name: draft.name.trim(), cid: draft.cid.trim(), type: draft.type, mechanic: draft.mechanic }); setEditingId(null) }
+    catch (err) { showToast('Save failed: ' + (err.message || err.code), 'err') }
+    finally { setBusyId(null) }
+  }
+
+  // Bulk import from pasted text (e.g. copied out of a Discord channel). New
+  // records start their 14 days from now; duplicates (by Citizen ID) are skipped.
+  const doImportPaste = async () => {
+    const rows = parseMembershipLines(importText)
+    if (rows.length === 0) { showToast('No valid lines found. Format: Name  CID  Type', 'err'); return }
+    const have = new Set(list.map(m => (m.cid || '').trim()).filter(Boolean))
+    const seen = new Set()
+    const fresh = rows.filter(r => { if (have.has(r.cid) || seen.has(r.cid)) return false; seen.add(r.cid); return true })
+    const skipped = rows.length - fresh.length
+    if (fresh.length === 0) { showToast('All rows already exist (by Citizen ID).', 'ok'); return }
+    if (!(await showConfirm({ title: `Import ${fresh.length} membership(s)?`, message: `${fresh.length} new${skipped ? `, ${skipped} skipped as duplicates` : ''}. They start a fresh ${MEMBERSHIP_DAYS} days from now.`, confirmLabel: 'Import' }))) return
+    setImporting(true)
+    try {
+      for (const r of fresh) {
+        await addDoc(collection(db, 'pitstop_memberships'), {
+          name: r.name, cid: r.cid, type: r.type, mechanic: importMechanic || '',
+          issuedAt: serverTimestamp(), createdAt: serverTimestamp(),
+          issuedByUid: user.uid, issuedByLabel: user.email, renewCount: 0, lastRenewedAt: null, imported: true,
+        })
+      }
+      setImportText(''); setShowImport(false)
+      showToast(`Imported ${fresh.length}${skipped ? `, skipped ${skipped}` : ''}.`, 'ok')
+    } catch (err) { showToast('Import failed: ' + (err.message || err.code), 'err') }
+    finally { setImporting(false) }
+  }
+
+  // Bring the launch membership giveaway tickets (bennys_tokens, channel
+  // 'membership') into the register — keeping each ticket's original issue date
+  // and its tier (stored in the ticket's note). Duplicates by CID are skipped.
+  const importExistingTickets = async () => {
+    if (importing) return
+    setImporting(true)
+    try {
+      const snap = await getDocs(query(collection(db, 'bennys_tokens'), where('channel', '==', 'membership')))
+      const tickets = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+      const have = new Set(list.map(m => (m.cid || '').trim()).filter(Boolean))
+      const seen = new Set()
+      const fresh = tickets.filter(t => {
+        const cid = (t.citizenId || '').trim()
+        if (cid && (have.has(cid) || seen.has(cid))) return false
+        if (cid) seen.add(cid)
+        return !!(t.name || '').trim()
+      })
+      if (fresh.length === 0) { showToast('No new membership tickets to import.', 'ok'); return }
+      if (!(await showConfirm({ title: `Import ${fresh.length} membership ticket(s)?`, message: 'Brings the launch membership tickets into the register, keeping their original issue date and tier. Duplicates (by Citizen ID) are skipped.', confirmLabel: 'Import' }))) return
+      for (const t of fresh) {
+        await addDoc(collection(db, 'pitstop_memberships'), {
+          name: (t.name || '').trim(), cid: (t.citizenId || '').trim(),
+          type: normalizeMembershipType(t.note || ''), mechanic: '',
+          issuedAt: t.createdAt || serverTimestamp(), createdAt: t.createdAt || serverTimestamp(),
+          issuedByUid: t.issuedByUid || null, issuedByLabel: t.issuedByLabel || 'imported',
+          renewCount: 0, lastRenewedAt: null, importedFrom: 'membership-ticket',
+        })
+      }
+      showToast(`Imported ${fresh.length} membership${fresh.length === 1 ? '' : 's'} from tickets.`, 'ok')
+    } catch (err) { showToast('Import failed: ' + (err.message || err.code), 'err') }
+    finally { setImporting(false) }
+  }
+
+  const activeCount  = list.filter(m => !membershipStatus(m).expired).length
+  const expiredCount = list.length - activeCount
+  const filtered = list.filter(m => {
+    if (filter === 'all') return true
+    const s = membershipStatus(m)
+    return filter === 'active' ? !s.expired : s.expired
+  })
+
+  return (
+    <main className="page">
+      <GiveawayPageHeader kicker="Memberships" title="Membership register.">
+        Every membership is valid for {MEMBERSHIP_DAYS} days from its issue date. Expired ones stay listed (in red) — hit <b>Renew</b> to start another {MEMBERSHIP_DAYS} days from today.
+      </GiveawayPageHeader>
+
+      <section className="section section--narrow">
+        <StaffToolbar user={user}/>
+
+        <form className="form" onSubmit={issue}>
+          <div className="form-row">
+            <label className="field"><span>Member name *</span>
+              <input ref={nameRef} value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="Cheeku Dosanjh" autoFocus/></label>
+            <label className="field"><span>Citizen ID *</span>
+              <input value={form.cid} onChange={e => setForm({ ...form, cid: e.target.value })} placeholder="7273"/></label>
+          </div>
+          <div className="form-row">
+            <label className="field"><span>Membership type</span>
+              <select value={form.type} onChange={e => setForm({ ...form, type: e.target.value })}>
+                {MEMBERSHIP_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+              </select></label>
+            <label className="field"><span>Issued by (mechanic) *</span>
+              <select value={form.mechanic} onChange={e => setForm({ ...form, mechanic: e.target.value })}>
+                <option value="">Select mechanic…</option>
+                {mechanics.map(n => <option key={n} value={n}>{n}</option>)}
+              </select></label>
+          </div>
+          <div className="form-foot">
+            <button className="btn btn--primary" type="submit" disabled={status.state === 'sending'}>
+              {status.state === 'sending' ? 'Saving…' : 'Add membership →'}
+            </button>
+            {status.state === 'ok'  && <span className="form-ok">{status.msg}</span>}
+            {status.state === 'err' && <span className="form-err">{status.msg}</span>}
+          </div>
+        </form>
+
+        <div className="form-foot" style={{ marginBottom: '1rem' }}>
+          <button type="button" className="btn btn--ghost btn--sm" onClick={() => setShowImport(s => !s)}>{showImport ? 'Close import' : 'Bulk import (paste)'}</button>
+          <button type="button" className="btn btn--ghost btn--sm" onClick={importExistingTickets} disabled={importing}>{importing ? 'Working…' : 'Import existing membership tickets'}</button>
+        </div>
+
+        {showImport && (
+          <div className="card" style={{ marginBottom: '1rem', padding: '1rem' }}>
+            <label className="field">
+              <span>Paste one member per line — e.g. “Cheeku Dosanjh 7273 Gold” (copied from Discord)</span>
+              <textarea rows={6} value={importText} onChange={e => setImportText(e.target.value)}
+                placeholder={'Cheeku Dosanjh 7273 Gold\nGhosty Zean 1392 Gold\nDolly Crispin 2367 Pink'}/>
+            </label>
+            <div className="form-row">
+              <label className="field"><span>Assign mechanic (optional)</span>
+                <select value={importMechanic} onChange={e => setImportMechanic(e.target.value)}>
+                  <option value="">— none —</option>
+                  {mechanics.map(n => <option key={n} value={n}>{n}</option>)}
+                </select></label>
+              <div className="field" style={{ justifyContent: 'flex-end' }}>
+                <button type="button" className="btn btn--primary" onClick={doImportPaste} disabled={importing || previewRows.length === 0}>
+                  {importing ? 'Importing…' : `Import ${previewRows.length || ''} parsed →`}
+                </button>
+              </div>
+            </div>
+            <div className="t3">{previewRows.length} row{previewRows.length === 1 ? '' : 's'} detected · name + Citizen ID + optional type per line. Duplicates (by Citizen ID) are skipped; pasted rows start a fresh {MEMBERSHIP_DAYS} days from now.</div>
+          </div>
+        )}
+
+        <div className="chips" style={{ marginBottom: '1rem' }}>
+          {[['all', `All · ${list.length}`], ['active', `Active · ${activeCount}`], ['expired', `Expired · ${expiredCount}`]].map(([k, lbl]) => (
+            <button type="button" key={k} className={`chip ${filter === k ? 'chip--on' : ''}`} onClick={() => setFilter(k)}>{lbl}</button>
+          ))}
+        </div>
+
+        <div className="ticket-table-wrap">
+          <table className="ticket-table">
+            <thead>
+              <tr>
+                <th>#</th><th>Name</th><th>Citizen ID</th><th>Type</th><th>Mechanic</th>
+                <th>Issued</th><th>Expires</th><th>Status</th><th>Manage</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.length === 0 && <tr><td colSpan={9} className="empty">No {filter === 'all' ? '' : filter + ' '}memberships yet.</td></tr>}
+              {filtered.map((m, i) => {
+                const s = membershipStatus(m)
+                const start = membershipStart(m)
+                const badge = s.pending ? ['new', 'Pending…']
+                  : s.expired            ? ['cancelled', `Expired · ${Math.abs(s.daysLeft)}d ago`]
+                  : s.daysLeft <= 3      ? ['new', `Expiring · ${s.daysLeft}d left`]
+                  :                        ['accepted', `Active · ${s.daysLeft}d left`]
+                const editing = editingId === m.id
+                return (
+                  <tr key={m.id}>
+                    <td>{i + 1}</td>
+                    {editing ? (
+                      <>
+                        <td><input className="ticket-table-input" value={draft.name} onChange={e => setDraft({ ...draft, name: e.target.value })}/></td>
+                        <td><input className="ticket-table-input" value={draft.cid} onChange={e => setDraft({ ...draft, cid: e.target.value })}/></td>
+                        <td><select className="ticket-table-input" value={draft.type} onChange={e => setDraft({ ...draft, type: e.target.value })}>{MEMBERSHIP_TYPES.map(t => <option key={t} value={t}>{t}</option>)}</select></td>
+                        <td><select className="ticket-table-input" value={draft.mechanic} onChange={e => setDraft({ ...draft, mechanic: e.target.value })}><option value="">—</option>{mechanics.map(n => <option key={n} value={n}>{n}</option>)}</select></td>
+                      </>
+                    ) : (
+                      <>
+                        <td>{m.name}</td>
+                        <td>{m.cid || '—'}</td>
+                        <td>{m.type || '—'}</td>
+                        <td>{m.mechanic || '—'}</td>
+                      </>
+                    )}
+                    <td className="ticket-table-time">{fmtDay(start)}</td>
+                    <td className="ticket-table-time">{fmtDay(s.expiresAt)}</td>
+                    <td><span className={`status status--${badge[0]}`}>{badge[1]}{m.renewCount ? ` · ↻${m.renewCount}` : ''}</span></td>
+                    <td className="ticket-table-actions">
+                      {editing ? (
+                        <>
+                          <button className="btn btn--ghost btn--sm" onClick={() => saveEdit(m)} disabled={busyId === m.id}>Save</button>
+                          <button className="btn btn--ghost btn--sm" onClick={() => setEditingId(null)} disabled={busyId === m.id}>Cancel</button>
+                        </>
+                      ) : (
+                        <>
+                          <button className="btn btn--primary btn--sm" onClick={() => renew(m)} disabled={busyId === m.id}>Renew</button>
+                          <button className="btn btn--ghost btn--sm" onClick={() => startEdit(m)} disabled={busyId === m.id}>Edit</button>
+                          {canManage && <button className="btn btn--del btn--sm" onClick={() => remove(m)} disabled={busyId === m.id}>{busyId === m.id ? '…' : 'Delete'}</button>}
+                        </>
+                      )}
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  )
+}
+
 /* ─── ADMIN (admin-only roster + users) ────────────────────── */
 
 function AdminPage() {
@@ -3205,7 +3566,7 @@ function AdminInner({ user, role }) {
   const titles = {
     roster:   { title: 'Manage the roster.', sub: 'Add, edit, or remove crew on the public /team page.' },
     users:    { title: 'Manage users.',      sub: 'Create accounts, change roles, block, or remove access. Management-only.' },
-    giveaway: { title: "Benny's launch giveaway.", sub: "Repair, food, membership, PD, and EMS ticket pools, plus the live spin-wheel draw. Each pool picks how many winners to draw." },
+    giveaway: { title: "Benny's launch giveaway (archived).", sub: "The launch-day raffle pools and spin-wheel draws. Kept here for records now that opening is done — issuance is off the public nav." },
     settings: { title: 'Settings.',          sub: 'Integrations and secrets. Admin-only — never visible to public visitors.' },
     audit:    { title: 'Audit log.',         sub: 'Every giveaway entry created, edited, or removed — when (IST) and by which account. Management-only.' },
   }
@@ -3219,20 +3580,16 @@ function AdminInner({ user, role }) {
         <StaffToolbar user={user}/>
 
         <div className="admin-quick-actions">
-          <span className="admin-quick-actions-label">Lucky draw, for stream:</span>
-          <Link to="/repair-draw" target="_blank" rel="noreferrer" className="btn btn--primary btn--sm">Repair Lucky Draw ↗</Link>
-          <Link to="/soochi-draw" target="_blank" rel="noreferrer" className="btn btn--primary btn--sm">Soochi Lucky Draw ↗</Link>
-          <Link to="/membership-draw" target="_blank" rel="noreferrer" className="btn btn--primary btn--sm">Membership Lucky Draw ↗</Link>
-          <Link to="/pd-draw" target="_blank" rel="noreferrer" className="btn btn--primary btn--sm">PD Lucky Draw ↗</Link>
-          <Link to="/ems-draw" target="_blank" rel="noreferrer" className="btn btn--primary btn--sm">EMS Lucky Draw ↗</Link>
+          <span className="admin-quick-actions-label">Quick links:</span>
+          <Link to="/memberships" className="btn btn--primary btn--sm">Memberships →</Link>
         </div>
 
         <div className="tabs tabs--main">
           <button className={`tab ${tab === 'roster'   ? 'is-on' : ''}`} onClick={() => setTab('roster')}>Roster</button>
           {isManagement && <button className={`tab ${tab === 'users' ? 'is-on' : ''}`} onClick={() => setTab('users')}>Users</button>}
-          <button className={`tab ${tab === 'giveaway' ? 'is-on' : ''}`} onClick={() => setTab('giveaway')}>Giveaway</button>
           <button className={`tab ${tab === 'settings' ? 'is-on' : ''}`} onClick={() => setTab('settings')}>Settings</button>
           {isManagement && <button className={`tab ${tab === 'audit' ? 'is-on' : ''}`} onClick={() => setTab('audit')}>Audit Log</button>}
+          <button className={`tab ${tab === 'giveaway' ? 'is-on' : ''}`} onClick={() => setTab('giveaway')}>Giveaway (archived)</button>
         </div>
 
         {tab === 'roster'   && <AdminRoster/>}
@@ -3848,13 +4205,14 @@ function AdminAuditLog() {
 // channel, so re-clicking never duplicates.
 const PD_EMS_SEED = {
   pd: [
-    { name: 'Ana Pratap',      cid: '1428' },
+    { name: 'Rana Pratap',     cid: '1428' },
     { name: 'Krishna Jhosi',   cid: '1341' },
     { name: 'Zarar Haider',    cid: '4462' },
     { name: 'Samantha Lee',    cid: '1359' },
     { name: 'Adi Soni',        cid: '1611' },
     { name: 'Shivansh Rathod', cid: '1627' },
     { name: 'Davy Jones',      cid: '2864' },
+    { name: 'Jerry Blake',     cid: '4492', note: 'Pink' },
   ],
   ems: [
     { name: 'Milo August',      cid: '1376' },
@@ -4242,6 +4600,8 @@ export default function App() {
             <Route path="/staff"     element={<StaffPage/>}/>
             <Route path="/bennys"    element={<BennysPage/>}/>
             <Route path="/soochi"    element={<SoochiPage/>}/>
+            <Route path="/memberships" element={<MembershipsPage/>}/>
+            {/* Launch-giveaway routes kept for archival/direct-URL access only. */}
             <Route path="/membership" element={<MembershipPage/>}/>
             <Route path="/pd"        element={<PdPage/>}/>
             <Route path="/ems"       element={<EmsPage/>}/>
